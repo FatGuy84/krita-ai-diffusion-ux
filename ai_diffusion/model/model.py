@@ -219,13 +219,14 @@ class DocumentModel(QObject, ObservableProperties):
             return
 
         try:
-            input, job_params, cond_orig = self._prepare_workflow()
+            input, job_params, cond_orig, prompt_loras_0 = self._prepare_workflow()
         except Exception as e:
             self.report_error(util.log_error(e))
             return
         self.clear_error()
         jobs = self.enqueue_jobs(
-            input, JobKind.diffusion, job_params, cond_orig, self.batch_count, queue_mode
+            input, JobKind.diffusion, job_params, cond_orig, self.batch_count, queue_mode,
+            prompt_loras_0=prompt_loras_0,
         )
         eventloop.run(_report_errors(self, jobs))
 
@@ -322,7 +323,7 @@ class DocumentModel(QObject, ObservableProperties):
         job_params.metadata.update(prompt_meta)
         job_params.metadata["loras"] = [{"name": l.name, "weight": l.strength} for l in loras]
         job_params.metadata["strength"] = strength
-        return input, job_params, original_conditioning
+        return input, job_params, original_conditioning, loras
 
     async def enqueue_jobs(
         self,
@@ -332,6 +333,7 @@ class DocumentModel(QObject, ObservableProperties):
         original_cond: ConditioningInput | None = None,
         count: int = 1,
         queue_mode: QueueMode | None = None,
+        prompt_loras_0: list | None = None,
     ):
         sampling = ensure(input.sampling)
         params.has_mask = input.images is not None and input.images.hires_mask is not None
@@ -341,6 +343,9 @@ class DocumentModel(QObject, ObservableProperties):
             if to_cancel := self.clear_queued():
                 await self._connection.client.cancel(to_cancel)
             queue_mode = QueueMode.back
+
+        prompt_lora_names_0 = {l.name for l in (prompt_loras_0 or [])}
+        base_loras = [l for l in input.models.loras if l.name not in prompt_lora_names_0]
 
         for i in range(count):
             seed = sampling.seed + i * settings.batch_size
@@ -355,10 +360,19 @@ class DocumentModel(QObject, ObservableProperties):
                         self.arch,
                         params.inpaint_mode,
                         params.ref_layers,
+                        batch_index=i,
                     )
                     input.conditioning = next_prompt.conditioning
                     params.metadata = params.metadata | next_prompt.metadata
                     params.name = params.metadata.get("prompt_eval", params.name)
+                    if prompt_loras_0 is not None:
+                        job_loras = unique(base_loras + next_prompt.loras, key=lambda l: l.name)
+                        params.metadata["loras"] = [
+                            {"name": l.name, "weight": l.strength} for l in job_loras
+                        ]
+                        job_models = copy(ensure(input.models))
+                        job_models.loras = job_loras
+                        input = replace(input, models=job_models)
             job = self.jobs.add(kind, copy(params))
             await self._enqueue_job(job, input, front=queue_mode is QueueMode.front)
 

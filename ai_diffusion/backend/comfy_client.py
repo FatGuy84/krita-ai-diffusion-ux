@@ -235,24 +235,56 @@ class ComfyClient(Client):
                 id = resource_id(ResourceKind.upscaler, Arch.all, UpscalerName.fast_x(n))
                 available_resources[id] = models.default_upscaler
 
+    def _model_cache_path(self):
+        import hashlib
+        url_hash = hashlib.md5(self.url.encode()).hexdigest()[:8]
+        return util.user_data_dir / f"model_cache_{url_hash}.json"
+
+    def _load_model_cache(self):
+        path = self._model_cache_path()
+        try:
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                return data.get("checkpoints", {}), data.get("diffusion_models", {})
+        except Exception as e:
+            log.warning(f"Could not load model cache: {e}")
+        return None, None
+
+    def _save_model_cache(self, checkpoints: dict, diffusion_models: dict):
+        path = self._model_cache_path()
+        try:
+            path.write_text(
+                json.dumps({"checkpoints": checkpoints, "diffusion_models": diffusion_models}),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            log.warning(f"Could not save model cache: {e}")
+
     async def discover_models(self, refresh: bool):
         if refresh:
             nodes = ComfyObjectInfo(await self._get("object_info"))
         else:
             nodes = self.models.node_inputs
 
-        checkpoints: dict[str, dict] = {}
-        diffusion_models: dict[str, dict] = {}
-        async for status, result in self.try_inspect("checkpoints"):
-            yield status
-            checkpoints.update(result)
-        async for status, result in self.try_inspect("diffusion_models"):
-            yield status
-            diffusion_models.update(result)
-        async for status, result in self.try_inspect("unet_gguf"):
-            yield status
-            diffusion_models.update(result)
-        self._refresh_models(nodes, checkpoints, diffusion_models)
+        cached_checkpoints, cached_diffusion = self._load_model_cache() if not refresh else (None, None)
+
+        if cached_checkpoints is not None and not refresh:
+            log.info("Loading models from cache (use Refresh to update)")
+            self._refresh_models(nodes, cached_checkpoints, cached_diffusion)
+        else:
+            checkpoints: dict[str, dict] = {}
+            diffusion_models: dict[str, dict] = {}
+            async for status, result in self.try_inspect("checkpoints"):
+                yield status
+                checkpoints.update(result)
+            async for status, result in self.try_inspect("diffusion_models"):
+                yield status
+                diffusion_models.update(result)
+            async for status, result in self.try_inspect("unet_gguf"):
+                yield status
+                diffusion_models.update(result)
+            self._save_model_cache(checkpoints, diffusion_models)
+            self._refresh_models(nodes, checkpoints, diffusion_models)
 
         # Check supported base models and make sure there is at least one
         self._supported_archs = {ver: self._check_workload(ver) for ver in Arch.list()}

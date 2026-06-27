@@ -74,6 +74,7 @@ from ..text import (
     pattern_layer,
     pattern_lora,
     pattern_weight_expr,
+    pattern_seq_wildcard,
     pattern_wildcard,
     select_on_cursor_pos,
     str_index_to_char16_index,
@@ -127,15 +128,25 @@ class QueuePopup(QMenu):
         batch_layout = QHBoxLayout()
         self._batch_slider = QSlider(Qt.Orientation.Horizontal, self)
         self._batch_slider.setMinimum(1)
-        self._batch_slider.setMaximum(10)
+        self._batch_slider.setMaximum(100)
         self._batch_slider.setSingleStep(1)
-        self._batch_slider.setPageStep(1)
+        self._batch_slider.setPageStep(5)
         self._batch_slider.setVisible(supports_batch)
         self._batch_slider.setToolTip(_("Number of jobs to enqueue at once"))
-        self._batch_label = QLabel("1", self)
-        self._batch_label.setVisible(supports_batch)
+        self._batch_spinbox = QSpinBox(self)
+        self._batch_spinbox.setMinimum(1)
+        self._batch_spinbox.setMaximum(100)
+        self._batch_spinbox.setFixedWidth(52)
+        self._batch_spinbox.setVisible(supports_batch)
+        self._batch_spinbox.setToolTip(_("Number of jobs to enqueue at once"))
+        self._batch_combo_button = QToolButton(self)
+        self._batch_combo_button.setIcon(theme.icon("random"))
+        self._batch_combo_button.setToolTip(_("Set batch count to the number of sequential wildcard combinations in the prompt"))
+        self._batch_combo_button.setVisible(supports_batch)
+        self._batch_combo_button.clicked.connect(self._set_batch_from_combinations)
         batch_layout.addWidget(self._batch_slider)
-        batch_layout.addWidget(self._batch_label)
+        batch_layout.addWidget(self._batch_spinbox)
+        batch_layout.addWidget(self._batch_combo_button)
         self._layout.addLayout(batch_layout, 1, 1)
 
         self._seed_label = QLabel(_("Seed"), self)
@@ -209,10 +220,12 @@ class QueuePopup(QMenu):
         self._randomize_seed.setEnabled(model.fixed_seed)
         self._seed_input.setValue(model.seed)
         self._seed_input.setEnabled(model.fixed_seed)
-        self._batch_label.setText(str(model.batch_count))
+        self._batch_spinbox.setValue(model.batch_count)
         self._connections = [
             bind(model, "batch_count", self._batch_slider, "value"),
-            model.batch_count_changed.connect(lambda v: self._batch_label.setText(str(v))),
+            model.batch_count_changed.connect(lambda v: self._batch_spinbox.setValue(v)),
+            self._batch_spinbox.valueChanged.connect(lambda v: self._batch_slider.setValue(v)),
+            self._batch_slider.valueChanged.connect(lambda v: self._batch_spinbox.setValue(v)),
             model.seed_changed.connect(lambda: self._seed_input.setValue(self._model.seed)),
             self._seed_input.valueChanged.connect(lambda v: setattr(self._model, "seed", int(v))),
             bind(model, "fixed_seed", self._seed_check, "checked", Bind.one_way),
@@ -252,7 +265,17 @@ class QueuePopup(QMenu):
 
     def _set_resolution_multiplier(self, value: int):
         self.model.resolution_multiplier = value / 10
-        self._resolution_multiplier_display.setText(f"{(value / 10):.1f} x")
+
+    def _set_batch_from_combinations(self):
+        prompt = self._model.regions.active_or_root.positive
+        matches = pattern_seq_wildcard.findall(prompt)
+        if not matches:
+            return
+        product = 1
+        for inner in matches:
+            product *= len(inner.split("|"))
+        product = min(product, 100)
+        self._model.batch_count = product
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         if parent := cast(QWidget, self.parent()):
@@ -438,6 +461,9 @@ class PromptHighlighter(QSyntaxHighlighter):
         self._keyword_fmt = QTextCharFormat()
         self._keyword_fmt.setForeground(QColor(theme.strong_highlight))
 
+        self._seq_wildcard_fmt = QTextCharFormat()
+        self._seq_wildcard_fmt.setForeground(QColor(theme.red))
+
         self._grey_fmt = QTextCharFormat()
         self._grey_fmt.setForeground(QColor(theme.grey))
 
@@ -482,6 +508,16 @@ class PromptHighlighter(QSyntaxHighlighter):
                     if char == "|":
                         self.setFormat(wildcard_start + i, 1, self._keyword_fmt)
                 self.setFormat(wildcard_start + len(wildcard_text) - 1, 1, self._keyword_fmt)
+
+        # sequential wildcard [[...]] spans multiple lines — mark opening/closing brackets only
+        if "[[" in text:
+            m_start = text.find("[[")
+            if m_start < comment_start:
+                self.setFormat(m_start, 2, self._seq_wildcard_fmt)
+        if "]]" in text:
+            m_end = text.rfind("]]")
+            if m_end < comment_start:
+                self.setFormat(m_end, 2, self._seq_wildcard_fmt)
 
 
 class ResizeHandle(QWidget):

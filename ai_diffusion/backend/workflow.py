@@ -1577,6 +1577,7 @@ def prepare_prompts(
     ref_layers: dict[str, int] | None = None,
     files: FileLibrary | None = None,
     is_live=False,
+    batch_index: int = 0,
 ):
     cond = copy(cond)
     files = files or FileLibrary.instance()
@@ -1596,7 +1597,7 @@ def prepare_prompts(
 
     cond.style = style.style_prompt
     cond.positive = strip_prompt_comments(cond.positive)
-    cond.positive = eval_wildcards(cond.positive, seed)
+    cond.positive = eval_wildcards(cond.positive, seed, batch_index)
     if cond.positive != meta["prompt"]:
         meta["prompt_eval"] = cond.positive
     cond.positive, extra_loras = extract_loras(cond.positive, files.loras)
@@ -1615,7 +1616,7 @@ def prepare_prompts(
         cond.negative = ""  # CFG 1 does not use negative prompt
     else:
         cond.negative = strip_prompt_comments(cond.negative)
-        cond.negative = eval_wildcards(cond.negative, seed)
+        cond.negative = eval_wildcards(cond.negative, seed, batch_index)
         if cond.negative != meta["negative_prompt"]:
             meta["negative_prompt_eval"] = cond.negative
         cond.negative = merge_prompt(cond.negative, style.negative_prompt, cond.language)
@@ -1627,7 +1628,7 @@ def prepare_prompts(
         region_meta: dict[str, Any] = {"prompt": region.positive}
 
         region.positive = strip_prompt_comments(region.positive)
-        region.positive = eval_wildcards(region.positive, seed)
+        region.positive = eval_wildcards(region.positive, seed, batch_index)
         if region.positive != region_meta["prompt"]:
             region_meta["prompt_eval"] = region.positive
         region.positive, region.loras = extract_loras(region.positive, files.loras)

@@ -50,6 +50,7 @@ pattern_lora = re.compile(r"<lora:([^:<>]+)(?::(-?[^:<>]*))?>", re.IGNORECASE)
 pattern_layer = re.compile(r"<layer:([^>]+)>", re.IGNORECASE)
 pattern_weight_expr = re.compile(r"\([^:()]+:(-?[\d.]+)\)")
 pattern_wildcard = re.compile(r"(\{[^{}]+\|[^{}]+\})")
+pattern_seq_wildcard = re.compile(r"\[\[((?:(?!\]\]).)*)\]\]", re.DOTALL)
 
 
 def strip_prompt_comments(prompt: str):
@@ -139,17 +140,36 @@ def replace_layers(prompt: str, layer_mapping: dict[str, int], replacement="Pict
     return pattern_layer.sub(replace, prompt).strip()
 
 
-def eval_wildcards(text: str, seed: int):
+def eval_wildcards(text: str, seed: int, batch_index: int = 0):
     rng = random.Random(seed)
 
-    def replace(match: re.Match[str]):
-        wildcard_name = match[1]
-        options = wildcard_name.split("|")
-        return rng.choice(options).strip("{} ")
+    def replace_random(match: re.Match[str]):
+        options = match[1].strip("{} ").split("|")
+        return rng.choice(options).strip()
+
+    # Cartesian product: each [[...]] group gets its own stride dimension
+    seq_matches = list(pattern_seq_wildcard.finditer(text))
+    if seq_matches:
+        option_counts = [len(m.group(1).split("|")) for m in seq_matches]
+        strides: list[int] = []
+        stride = 1
+        for count in option_counts:
+            strides.append(stride)
+            stride *= count
+
+        _group = [0]
+
+        def replace_sequential(match: re.Match[str]):
+            options = [o.strip() for o in match.group(1).split("|")]
+            idx = (batch_index // strides[_group[0]]) % len(options)
+            _group[0] += 1
+            return options[idx]
+
+        text = pattern_seq_wildcard.sub(replace_sequential, text)
 
     for __ in range(10):
         prev = text
-        text = pattern_wildcard.sub(replace, text)
+        text = pattern_wildcard.sub(replace_random, text)
         if text == prev:
             break
 
