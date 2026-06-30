@@ -1,21 +1,17 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from PyQt5.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon, QPixmap
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QDialogButtonBox,
     QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPushButton,
     QSizePolicy,
     QToolButton,
@@ -24,18 +20,21 @@ from PyQt5.QtWidgets import (
 )
 
 from .. import eventloop
-from ..backend.lora_manager import LoraInfo, arch_for_base_model, fetch_loras, fetch_preview_bytes
+from ..backend.lora_manager import (
+    LoraInfo,
+    arch_for_base_model,
+    fetch_loras_pages,
+    fetch_preview_bytes,
+    load_cached_loras,
+    save_lora_cache,
+)
 from ..localization import translate as _
 from ..model.root import root
-from ..util import client_logger as log
 from . import theme
-
-if TYPE_CHECKING:
-    pass
 
 _PREVIEW_SIZE = 96
 _TAG_ALL = "__all__"
-_MAX_TAG_BUTTONS = 20
+_MAX_TAG_ENTRIES = 30
 _ARCH_ANY = "__any__"
 _KNOWN_ARCHES = [
     "sd15", "sdxl", "illu", "sd3", "flux", "flux_k",
@@ -51,45 +50,51 @@ class LoraPickerDialog(QDialog):
         self._current_arch = current_arch
         self._all_loras: list[LoraInfo] = []
         self._filtered: list[LoraInfo] = []
-        self._active_tag = _TAG_ALL
         self._preview_cache: dict[str, QPixmap] = {}
         self._pending_previews: set[str] = set()
+        self._loading = False
 
         self.setWindowTitle(_("LoRA Browser"))
         self.setMinimumSize(640, 480)
         self.resize(800, 560)
+        # Non-modal: Krita stays interactive while this dialog is open
+        self.setModal(False)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.Window)
 
-        # ── top bar ──
+        # ── row 1: search ──
         self._search = QLineEdit(self)
         self._search.setPlaceholderText(_("Search LoRAs…"))
         self._search.textChanged.connect(self._apply_filter)
 
-        arch_label = QLabel(_("Arch:"), self)
+        self._refresh_btn = QToolButton(self)
+        self._refresh_btn.setIcon(theme.icon("reset"))
+        self._refresh_btn.setToolTip(_("Reload LoRA list from server (bypass cache)"))
+        self._refresh_btn.clicked.connect(self._force_reload)
+
+        row1 = QHBoxLayout()
+        row1.addWidget(self._search, 1)
+        row1.addWidget(self._refresh_btn)
+
+        # ── row 2: base model + tag dropdowns ──
+        arch_label = QLabel(_("Base Model:"), self)
         self._arch_combo = QComboBox(self)
         self._arch_combo.addItem(_("Any"), _ARCH_ANY)
         for arch in _KNOWN_ARCHES:
             self._arch_combo.addItem(arch, arch)
-        # pre-select current style's arch if known, otherwise "Any" (most LoRAs have no base_model info)
         idx = self._arch_combo.findData(current_arch)
         self._arch_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._arch_combo.currentIndexChanged.connect(self._apply_filter)
 
-        self._refresh_btn = QToolButton(self)
-        self._refresh_btn.setIcon(theme.icon("reset"))
-        self._refresh_btn.setToolTip(_("Reload LoRA list from server"))
-        self._refresh_btn.clicked.connect(self._load_loras)
+        tag_label = QLabel(_("Tag:"), self)
+        self._tag_combo = QComboBox(self)
+        self._tag_combo.addItem(_("All"), _TAG_ALL)
+        self._tag_combo.currentIndexChanged.connect(self._apply_filter)
 
-        top_layout = QHBoxLayout()
-        top_layout.addWidget(self._search, 1)
-        top_layout.addWidget(arch_label)
-        top_layout.addWidget(self._arch_combo)
-        top_layout.addWidget(self._refresh_btn)
-
-        # ── tag filter row (populated dynamically once LoRAs are loaded) ──
-        self._tag_buttons: dict[str, QPushButton] = {}
-        self._tag_layout = QHBoxLayout()
-        self._tag_layout.setSpacing(4)
-        self._tag_layout.addStretch()
+        row2 = QHBoxLayout()
+        row2.addWidget(arch_label)
+        row2.addWidget(self._arch_combo, 1)
+        row2.addWidget(tag_label)
+        row2.addWidget(self._tag_combo, 1)
 
         # ── grid ──
         self._grid = QListWidget(self)
@@ -101,6 +106,12 @@ class LoraPickerDialog(QDialog):
         self._grid.setWordWrap(True)
         self._grid.setSpacing(4)
         self._grid.itemSelectionChanged.connect(self._on_selection_changed)
+
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(120)
+        self._preview_timer.timeout.connect(self._load_visible_previews)
+        self._grid.verticalScrollBar().valueChanged.connect(self._schedule_visible_previews)
 
         # ── bottom bar ──
         self._selected_label = QLabel(_("No LoRA selected"), self)
@@ -141,8 +152,8 @@ class LoraPickerDialog(QDialog):
         self._status.setStyleSheet(f"color: {theme.grey}; font-style: italic;")
 
         layout = QVBoxLayout()
-        layout.addLayout(top_layout)
-        layout.addLayout(self._tag_layout)
+        layout.addLayout(row1)
+        layout.addLayout(row2)
         layout.addWidget(self._grid, 1)
         layout.addWidget(self._status)
         layout.addLayout(bottom_layout)
@@ -152,63 +163,71 @@ class LoraPickerDialog(QDialog):
 
     # ── data loading ──
 
-    def _load_loras(self):
-        self._status.setText(_("Loading…"))
-        self._grid.clear()
-        self._all_loras = []
-        eventloop.run(self._fetch())
-
-    async def _fetch(self):
+    def _load_loras(self, force_refresh: bool = False):
+        if self._loading:
+            return
         client = root.connection.client_if_connected
         if client is None:
             self._status.setText(_("Not connected to ComfyUI"))
             return
-        loras = await fetch_loras(client._requests, client.url)
-        if not loras:
-            self._status.setText(_("LoRA Manager not installed or no LoRAs found"))
-            return
-        self._all_loras = loras
-        self._build_tag_buttons()
-        self._apply_filter()
+
+        if not force_refresh:
+            cached = load_cached_loras(client.url)
+            if cached:
+                self._all_loras = cached
+                self._rebuild_filters()
+                self._apply_filter()
+                self._status.setText(f"{len(cached)} {_('LoRAs (cached)')}")
+                return
+
+        self._status.setText(_("Loading…"))
+        self._grid.clear()
+        self._all_loras = []
+        self._loading = True
+        eventloop.run(self._fetch_progressive(client))
+
+    def _force_reload(self):
+        self._load_loras(force_refresh=True)
+
+    async def _fetch_progressive(self, client):
+        try:
+            async for batch in fetch_loras_pages(client._requests, client.url):
+                self._all_loras.extend(batch)
+                self._rebuild_filters()
+                self._apply_filter()
+                self._status.setText(f"{_('Loading…')} ({len(self._all_loras)})")
+        finally:
+            self._loading = False
+            if self._all_loras:
+                save_lora_cache(client.url, self._all_loras)
+                self._status.setText(f"{len(self._filtered)} / {len(self._all_loras)} LoRAs")
+            else:
+                self._status.setText(_("LoRA Manager not installed or no LoRAs found"))
 
     # ── filtering ──
 
-    def _build_tag_buttons(self):
-        # remove old buttons
-        for btn in self._tag_buttons.values():
-            btn.deleteLater()
-        self._tag_buttons.clear()
-
+    def _rebuild_filters(self):
         counts: dict[str, int] = {}
         for lora in self._all_loras:
             for tag in lora.tags:
                 counts[tag] = counts.get(tag, 0) + 1
-        top_tags = sorted(counts, key=lambda t: -counts[t])[:_MAX_TAG_BUTTONS]
+        top_tags = sorted(counts, key=lambda t: -counts[t])[:_MAX_TAG_ENTRIES]
 
-        self._active_tag = _TAG_ALL
-        stretch_item = self._tag_layout.takeAt(self._tag_layout.count() - 1)
-        for tag in [_TAG_ALL] + top_tags:
-            label = _("All") if tag == _TAG_ALL else f"{tag} ({counts.get(tag, 0)})"
-            btn = QPushButton(label, self)
-            btn.setCheckable(True)
-            btn.setChecked(tag == _TAG_ALL)
-            btn.setFlat(True)
-            btn.clicked.connect(lambda checked, t=tag: self._select_tag(t))
-            self._tag_buttons[tag] = btn
-            self._tag_layout.addWidget(btn)
-        if stretch_item:
-            self._tag_layout.addItem(stretch_item)
-
-    def _select_tag(self, tag: str):
-        self._active_tag = tag
-        for t, btn in self._tag_buttons.items():
-            btn.setChecked(t == tag)
-        self._apply_filter()
+        current = self._tag_combo.currentData()
+        self._tag_combo.blockSignals(True)
+        self._tag_combo.clear()
+        self._tag_combo.addItem(_("All"), _TAG_ALL)
+        for tag in top_tags:
+            self._tag_combo.addItem(f"{tag} ({counts[tag]})", tag)
+        idx = self._tag_combo.findData(current)
+        self._tag_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._tag_combo.blockSignals(False)
 
     def _apply_filter(self):
         search = self._search.text().lower()
         arch = self._arch_combo.currentData()
         arch = "" if arch == _ARCH_ANY else (arch or "")
+        active_tag = self._tag_combo.currentData()
 
         def matches(lora: LoraInfo) -> bool:
             if arch and lora.base_model:
@@ -216,11 +235,11 @@ class LoraPickerDialog(QDialog):
                 if lora_arch and lora_arch != arch:
                     return False
             # no base_model info or unmapped → show always
-            if self._active_tag != _TAG_ALL:
-                if not any(self._active_tag in t.lower() for t in lora.tags):
+            if active_tag and active_tag != _TAG_ALL:
+                if active_tag not in lora.tags:
                     return False
             if search:
-                haystack = lora.name.lower() + " " + " ".join(lora.tags).lower()
+                haystack = (lora.name + " " + lora.display_name + " " + " ".join(lora.tags)).lower()
                 if search not in haystack:
                     return False
             return True
@@ -231,21 +250,41 @@ class LoraPickerDialog(QDialog):
     def _populate_grid(self):
         self._grid.clear()
         for lora in self._filtered:
-            item = QListWidgetItem(lora.name)
+            item = QListWidgetItem(lora.display_name or lora.name)
             item.setData(Qt.ItemDataRole.UserRole, lora)
             item.setToolTip(
-                f"{lora.name}\nBase: {lora.base_model or '?'}\n"
+                f"{lora.display_name}\nFile: {lora.name}\nBase: {lora.base_model or '?'}\n"
                 + (f"Triggers: {', '.join(lora.trigger_words)}" if lora.trigger_words else "")
             )
             if lora.sha256 in self._preview_cache:
                 item.setIcon(QIcon(self._preview_cache[lora.sha256]))
-            elif lora.preview_url and lora.sha256 not in self._pending_previews:
-                self._pending_previews.add(lora.sha256)
-                eventloop.run(self._load_preview(lora, item))
             self._grid.addItem(item)
-        count = len(self._filtered)
-        total = len(self._all_loras)
-        self._status.setText(f"{count} / {total} LoRAs")
+        if not self._loading:
+            self._status.setText(f"{len(self._filtered)} / {len(self._all_loras)} LoRAs")
+        self._schedule_visible_previews()
+
+    # ── lazy preview loading (only visible items) ──
+
+    def _schedule_visible_previews(self):
+        self._preview_timer.start()
+
+    def _load_visible_previews(self):
+        viewport_rect = self._grid.viewport().rect()
+        client = root.connection.client_if_connected
+        if client is None:
+            return
+        for i in range(self._grid.count()):
+            item = self._grid.item(i)
+            rect = self._grid.visualItemRect(item)
+            if not rect.intersects(viewport_rect):
+                continue
+            lora: LoraInfo = item.data(Qt.ItemDataRole.UserRole)
+            if not lora.preview_url or lora.sha256 in self._preview_cache:
+                continue
+            if lora.sha256 in self._pending_previews:
+                continue
+            self._pending_previews.add(lora.sha256)
+            eventloop.run(self._load_preview(lora, item))
 
     async def _load_preview(self, lora: LoraInfo, item: QListWidgetItem):
         client = root.connection.client_if_connected
@@ -271,7 +310,7 @@ class LoraPickerDialog(QDialog):
         items = self._grid.selectedItems()
         if items:
             lora: LoraInfo = items[0].data(Qt.ItemDataRole.UserRole)
-            self._selected_label.setText(f"{lora.name}  [{lora.base_model or '?'}]")
+            self._selected_label.setText(f"{lora.display_name}  [{lora.base_model or '?'}]")
             self._add_btn.setEnabled(True)
         else:
             self._selected_label.setText(_("No LoRA selected"))

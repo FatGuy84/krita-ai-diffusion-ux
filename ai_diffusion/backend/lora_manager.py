@@ -1,20 +1,33 @@
 from __future__ import annotations
 
+import hashlib
 import json
-from dataclasses import dataclass, field
+import time
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .. import util
 from ..util import client_logger as log
 
 if TYPE_CHECKING:
     from .network import RequestManager
 
+_STRIP_SUFFIXES = (".safetensors", ".pt", ".ckpt", ".bin")
+_CACHE_MAX_AGE = 6 * 3600  # seconds
+
+
+def _clean_name(file_name: str) -> str:
+    for suffix in _STRIP_SUFFIXES:
+        if file_name.endswith(suffix):
+            return file_name[: -len(suffix)]
+    return file_name
+
 
 @dataclass
 class LoraInfo:
-    name: str
-    file_name: str
+    name: str  # file name without extension - this is what ComfyUI expects in <lora:name:weight>
+    display_name: str = ""  # human-readable title shown in the UI
     base_model: str = ""
     tags: list[str] = field(default_factory=list)
     preview_url: str = ""
@@ -24,8 +37,9 @@ class LoraInfo:
     @staticmethod
     def from_api(data: dict, base_url: str) -> LoraInfo:
         # ComfyUI-Lora-Manager format: GET /api/lm/loras/list
-        name = data.get("model_name") or data.get("file_name", "")
-        file_name = data.get("file_name") or name
+        file_name = data.get("file_name") or data.get("model_name", "")
+        name = _clean_name(file_name)
+        display_name = data.get("model_name") or name
         sha256 = data.get("sha256", "")
         preview = data.get("preview_url", "")
         if preview and preview.startswith("/"):
@@ -39,7 +53,7 @@ class LoraInfo:
             trigger_words = civitai.get("trainedWords") or []
         return LoraInfo(
             name=name,
-            file_name=file_name,
+            display_name=display_name,
             base_model=data.get("base_model", ""),
             tags=tags,
             preview_url=preview,
@@ -82,16 +96,49 @@ def arch_for_base_model(base_model: str) -> str:
     return ""
 
 
-async def fetch_loras(requests: RequestManager, base_url: str) -> list[LoraInfo]:
-    """Fetch LoRA list. Tries ComfyUI-Lora-Manager first, falls back to /models/loras."""
+def _cache_path(base_url: str) -> Path:
+    url_hash = hashlib.md5(base_url.encode()).hexdigest()[:8]
+    return util.user_data_dir / f"lora_manager_cache_{url_hash}.json"
+
+
+def load_cached_loras(base_url: str) -> list[LoraInfo] | None:
+    """Return cached LoRA list if present and not expired, else None."""
+    path = _cache_path(base_url)
+    try:
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if time.time() - data.get("timestamp", 0) > _CACHE_MAX_AGE:
+            return None
+        return [LoraInfo(**item) for item in data.get("loras", [])]
+    except Exception as e:
+        log.warning(f"Could not load LoRA cache: {e}")
+        return None
+
+
+def save_lora_cache(base_url: str, loras: list[LoraInfo]):
+    path = _cache_path(base_url)
+    try:
+        data = {"timestamp": time.time(), "loras": [asdict(l) for l in loras]}
+        path.write_text(json.dumps(data), encoding="utf-8")
+    except Exception as e:
+        log.warning(f"Could not save LoRA cache: {e}")
+
+
+async def fetch_loras_pages(requests: RequestManager, base_url: str):
+    """Yield LoRA list incrementally, one server page at a time.
+
+    Falls back to a single yield from /models/loras (filename list only) if
+    ComfyUI-Lora-Manager is not installed.
+    """
     base = base_url.rstrip("/")
 
     # ComfyUI-Lora-Manager (rich metadata: tags, base_model, preview, trigger words)
-    # Server caps page_size, so page through all results.
+    # Server caps page_size regardless of what we request, so page through all results.
     try:
-        result: list[LoraInfo] = []
         page = 1
         page_size = 200
+        got_any = False
         while True:
             data = await requests.get(
                 f"{base}/api/lm/loras/list?page={page}&page_size={page_size}", timeout=15.0
@@ -103,15 +150,17 @@ async def fetch_loras(requests: RequestManager, base_url: str) -> list[LoraInfo]
             items = data.get("items") or data.get("loras") or []
             if not items:
                 break
-            result.extend(LoraInfo.from_api(item, base) for item in items)
-            total = data.get("total", len(result))
+            got_any = True
+            batch = [LoraInfo.from_api(item, base) for item in items]
+            yield batch
+            total = data.get("total", page * page_size)
             actual_page_size = data.get("page_size", page_size)
-            if len(result) >= total or len(items) < actual_page_size:
+            loaded = page * actual_page_size
+            if loaded >= total or len(items) < actual_page_size:
                 break
             page += 1
-        if result:
-            log.info(f"Loaded {len(result)} LoRAs from Lora Manager")
-            return result
+        if got_any:
+            return
     except Exception as e:
         log.warning(f"Lora Manager API not available: {e}")
 
@@ -124,16 +173,14 @@ async def fetch_loras(requests: RequestManager, base_url: str) -> list[LoraInfo]
             result = []
             for entry in data:
                 if isinstance(entry, str):
-                    name = Path(entry).stem
-                    result.append(LoraInfo(name=name, file_name=entry))
+                    result.append(LoraInfo(name=_clean_name(entry), display_name=_clean_name(entry)))
                 elif isinstance(entry, dict):
                     result.append(LoraInfo.from_api(entry, base))
-            log.info(f"Loaded {len(result)} LoRAs from /models/loras (no metadata)")
-            return result
+            if result:
+                log.info(f"Loaded {len(result)} LoRAs from /models/loras (no metadata)")
+                yield result
     except Exception as e:
         log.warning(f"Could not fetch LoRA list: {e}")
-
-    return []
 
 
 async def fetch_preview_bytes(requests: RequestManager, preview_url: str) -> bytes | None:

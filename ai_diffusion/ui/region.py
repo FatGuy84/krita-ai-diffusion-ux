@@ -202,6 +202,7 @@ class ActiveRegionWidget(QFrame):
             "QToolButton { background: #40808080; border: 1px solid #60808080; border-radius: 2px; }"
         )
         self._lora_browse_button.clicked.connect(self._open_lora_picker)
+        self._lora_dialog: LoraPickerDialog | None = None
 
         self._setup_bindings(self._region)
         settings.changed.connect(self.update_settings)
@@ -487,10 +488,13 @@ class ActiveRegionWidget(QFrame):
             self._update_prompt_widgets()
 
     def _open_lora_picker(self):
-        model = root.active_model
-        arch = model.arch.name if model else ""
-        dialog = LoraPickerDialog(arch, parent=self)
-        dialog.exec_()
+        if self._lora_dialog is None:
+            model = root.active_model
+            arch = model.arch.name if model else ""
+            self._lora_dialog = LoraPickerDialog(arch, parent=self)
+        self._lora_dialog.show()
+        self._lora_dialog.raise_()
+        self._lora_dialog.activateWindow()
 
     def resizeEvent(self, a0):
         super().resizeEvent(a0)
