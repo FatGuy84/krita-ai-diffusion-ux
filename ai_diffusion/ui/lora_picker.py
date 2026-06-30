@@ -314,9 +314,16 @@ class LoraPickerDialog(QDialog):
 
     def _populate_grid(self):
         self._grid.clear()
+        cell_size = self._grid.gridSize()
         for lora in self._filtered:
             item = QListWidgetItem(lora.display_name or lora.name)
             item.setData(Qt.ItemDataRole.UserRole, lora)
+            # Force the item's clickable rect to fill the whole grid cell.
+            # Without this, Qt sizes it to the wrapped text content, so
+            # short single-line names get a tiny hit area while longer
+            # wrapped names happen to fill the cell - ctrl-click then only
+            # seems to "work" on multi-line items.
+            item.setSizeHint(cell_size)
             fav = "★ " if lora.favorite else ""
             item.setToolTip(
                 f"{fav}{lora.display_name}\nFile: {lora.name}\nBase: {lora.base_model or '?'}\n"
