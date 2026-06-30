@@ -3,8 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PyQt5.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QIcon, QPixmap
 from PyQt5.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
 _PREVIEW_SIZE = 96
 _TAG_ALL = "__all__"
 _KNOWN_TAGS = ["character", "style", "concept", "clothing", "pose", "background", "object"]
+_ARCH_ANY = "__any__"
+_KNOWN_ARCHES = ["sd15", "sdxl", "sd3", "flux"]
 
 
 class LoraPickerDialog(QDialog):
@@ -57,8 +60,15 @@ class LoraPickerDialog(QDialog):
         self._search.setPlaceholderText(_("Search LoRAs…"))
         self._search.textChanged.connect(self._apply_filter)
 
-        self._arch_label = QLabel(f"Arch: {current_arch or '?'}", self)
-        self._arch_label.setStyleSheet(f"color: {theme.highlight}; font-weight: bold;")
+        arch_label = QLabel(_("Arch:"), self)
+        self._arch_combo = QComboBox(self)
+        self._arch_combo.addItem(_("Any"), _ARCH_ANY)
+        for arch in _KNOWN_ARCHES:
+            self._arch_combo.addItem(arch, arch)
+        # pre-select current style's arch if known, otherwise "Any" (most LoRAs have no base_model info)
+        idx = self._arch_combo.findData(current_arch)
+        self._arch_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._arch_combo.currentIndexChanged.connect(self._apply_filter)
 
         self._refresh_btn = QToolButton(self)
         self._refresh_btn.setIcon(theme.icon("reset"))
@@ -67,7 +77,8 @@ class LoraPickerDialog(QDialog):
 
         top_layout = QHBoxLayout()
         top_layout.addWidget(self._search, 1)
-        top_layout.addWidget(self._arch_label)
+        top_layout.addWidget(arch_label)
+        top_layout.addWidget(self._arch_combo)
         top_layout.addWidget(self._refresh_btn)
 
         # ── tag filter row ──
@@ -167,14 +178,15 @@ class LoraPickerDialog(QDialog):
 
     def _apply_filter(self):
         search = self._search.text().lower()
-        arch = self._current_arch.lower()
+        arch = self._arch_combo.currentData()
+        arch = "" if arch == _ARCH_ANY else (arch or "")
 
         def matches(lora: LoraInfo) -> bool:
             if arch and lora.base_model:
                 lora_arch = arch_for_base_model(lora.base_model)
                 if lora_arch and lora_arch != arch:
                     return False
-            # no base_model info → show always
+            # no base_model info or unmapped → show always
             if self._active_tag != _TAG_ALL:
                 if not any(self._active_tag in t.lower() for t in lora.tags):
                     return False
@@ -197,7 +209,7 @@ class LoraPickerDialog(QDialog):
                 + (f"Triggers: {', '.join(lora.trigger_words)}" if lora.trigger_words else "")
             )
             if lora.sha256 in self._preview_cache:
-                item.setIcon(self._preview_cache[lora.sha256])
+                item.setIcon(QIcon(self._preview_cache[lora.sha256]))
             elif lora.preview_url and lora.sha256 not in self._pending_previews:
                 self._pending_previews.add(lora.sha256)
                 eventloop.run(self._load_preview(lora, item))
@@ -222,7 +234,7 @@ class LoraPickerDialog(QDialog):
                     Qt.TransformationMode.SmoothTransformation,
                 )
                 self._preview_cache[lora.sha256] = pixmap
-                item.setIcon(pixmap)
+                item.setIcon(QIcon(pixmap))
 
     # ── selection / insertion ──
 

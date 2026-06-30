@@ -77,16 +77,30 @@ async def fetch_loras(requests: RequestManager, base_url: str) -> list[LoraInfo]
     base = base_url.rstrip("/")
 
     # ComfyUI-Lora-Manager (rich metadata: tags, base_model, preview, trigger words)
+    # Server caps page_size, so page through all results.
     try:
-        data = await requests.get(f"{base}/api/lm/loras/list?page=1&page_size=10000", timeout=15.0)
-        if isinstance(data, (bytes, bytearray)):
-            data = json.loads(data)
-        if isinstance(data, dict):
+        result: list[LoraInfo] = []
+        page = 1
+        page_size = 200
+        while True:
+            data = await requests.get(
+                f"{base}/api/lm/loras/list?page={page}&page_size={page_size}", timeout=15.0
+            )
+            if isinstance(data, (bytes, bytearray)):
+                data = json.loads(data)
+            if not isinstance(data, dict):
+                break
             items = data.get("items") or data.get("loras") or []
-            if items:
-                result = [LoraInfo.from_api(item, base) for item in items]
-                log.info(f"Loaded {len(result)} LoRAs from Lora Manager")
-                return result
+            if not items:
+                break
+            result.extend(LoraInfo.from_api(item, base) for item in items)
+            total = data.get("total", len(result))
+            if len(result) >= total or len(items) < page_size:
+                break
+            page += 1
+        if result:
+            log.info(f"Loaded {len(result)} LoRAs from Lora Manager")
+            return result
     except Exception as e:
         log.warning(f"Lora Manager API not available: {e}")
 
