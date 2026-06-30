@@ -39,6 +39,11 @@ _PREVIEW_SIZE_MAX = 192
 _TAG_ALL = "__all__"
 _MAX_TAG_ENTRIES = 30
 _TRIGGER_ALL = "__all_triggers__"
+_FORMAT_RANDOM = "random"
+_FORMAT_SEQUENTIAL = "sequential"
+_MULTI_TRIGGERS_NONE = "none"
+_MULTI_TRIGGERS_FIRST = "first"
+_MULTI_TRIGGERS_ALL = "all"
 _ARCH_ANY = "__any__"
 _KNOWN_ARCHES = [
     "sd15", "sdxl", "illu", "sd3", "flux", "flux_k",
@@ -125,6 +130,7 @@ class LoraPickerDialog(QDialog):
 
         # ── grid ──
         self._grid = QListWidget(self)
+        self._grid.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self._grid.setViewMode(QListWidget.ViewMode.IconMode)
         self._grid.setIconSize(QSize(self._preview_size, self._preview_size))
         self._grid.setGridSize(QSize(self._preview_size + 16, self._preview_size + 40))
@@ -166,6 +172,22 @@ class LoraPickerDialog(QDialog):
             _("CivitAI lists alternative trigger phrases - pick which one to insert")
         )
 
+        # multi-select controls (shown instead of the above when 2+ LoRAs are selected)
+        self._format_combo = QComboBox(self)
+        self._format_combo.addItem(_("Random {a|b}"), _FORMAT_RANDOM)
+        self._format_combo.addItem(_("Sequential [[a|b]]"), _FORMAT_SEQUENTIAL)
+        self._format_combo.setToolTip(
+            _("Random: one is picked per generation. Sequential: cycles through in batch order.")
+        )
+
+        self._multi_trigger_mode = QComboBox(self)
+        self._multi_trigger_mode.addItem(_("No trigger words"), _MULTI_TRIGGERS_NONE)
+        self._multi_trigger_mode.addItem(_("First trigger group"), _MULTI_TRIGGERS_FIRST)
+        self._multi_trigger_mode.addItem(_("All trigger groups"), _MULTI_TRIGGERS_ALL)
+        self._multi_trigger_mode.setCurrentIndex(1)
+        self._format_combo.setVisible(False)
+        self._multi_trigger_mode.setVisible(False)
+
         self._add_btn = QPushButton(_("Add to Prompt"), self)
         self._add_btn.setEnabled(False)
         self._add_btn.clicked.connect(self._add_to_prompt)
@@ -179,6 +201,8 @@ class LoraPickerDialog(QDialog):
         bottom_layout.addWidget(self._strength)
         bottom_layout.addWidget(self._include_triggers)
         bottom_layout.addWidget(self._trigger_combo)
+        bottom_layout.addWidget(self._format_combo)
+        bottom_layout.addWidget(self._multi_trigger_mode)
         bottom_layout.addWidget(self._add_btn)
         bottom_layout.addWidget(close_btn)
 
@@ -372,7 +396,19 @@ class LoraPickerDialog(QDialog):
 
     def _on_selection_changed(self):
         items = self._grid.selectedItems()
-        if items:
+        is_multi = len(items) > 1
+
+        self._include_triggers.setVisible(not is_multi)
+        self._trigger_combo.setVisible(not is_multi)
+        self._format_combo.setVisible(is_multi)
+        self._multi_trigger_mode.setVisible(is_multi)
+
+        if is_multi:
+            names = ", ".join(i.data(Qt.ItemDataRole.UserRole).display_name for i in items[:3])
+            more = f" +{len(items) - 3}" if len(items) > 3 else ""
+            self._selected_label.setText(f"{len(items)} {_('selected')}: {names}{more}")
+            self._add_btn.setEnabled(True)
+        elif items:
             lora: LoraInfo = items[0].data(Qt.ItemDataRole.UserRole)
             fav = "★ " if lora.favorite else ""
             self._selected_label.setText(f"{fav}{lora.display_name}  [{lora.base_model or '?'}]")
@@ -397,21 +433,46 @@ class LoraPickerDialog(QDialog):
         items = self._grid.selectedItems()
         if not items:
             return
-        lora: LoraInfo = items[0].data(Qt.ItemDataRole.UserRole)
-        strength = self._strength.value()
-        parts = [f"<lora:{lora.name}:{strength:.2f}>"]
-        if self._include_triggers.isChecked() and self._trigger_combo.currentData():
-            selected = self._trigger_combo.currentData()
-            if selected == _TRIGGER_ALL:
-                parts.append("\n----\n".join(lora.trigger_words))
-            else:
-                parts.append(selected)
-        addition = " ".join(parts)
         model = root.active_model
         if model is None:
             return
+
+        if len(items) > 1:
+            addition = self._build_multi_lora_block(items)
+            self.lora_selected.emit("", self._strength.value())
+        else:
+            lora: LoraInfo = items[0].data(Qt.ItemDataRole.UserRole)
+            strength = self._strength.value()
+            parts = [f"<lora:{lora.name}:{strength:.2f}>"]
+            if self._include_triggers.isChecked() and self._trigger_combo.currentData():
+                selected = self._trigger_combo.currentData()
+                if selected == _TRIGGER_ALL:
+                    parts.append("\n----\n".join(lora.trigger_words))
+                else:
+                    parts.append(selected)
+            addition = " ".join(parts)
+            self.lora_selected.emit(lora.name, strength)
+
         region = model.regions.active_or_root
         current = region.positive
         # always add the lora on its own new line at the end of the prompt
         region.positive = current.rstrip("\n") + "\n" + addition
-        self.lora_selected.emit(lora.name, strength)
+
+    def _build_multi_lora_block(self, items: list[QListWidgetItem]) -> str:
+        strength = self._strength.value()
+        trigger_mode = self._multi_trigger_mode.currentData()
+        entries = []
+        for item in items:
+            lora: LoraInfo = item.data(Qt.ItemDataRole.UserRole)
+            tag = f"<lora:{lora.name}:{strength:.2f}>"
+            trigger_text = ""
+            if trigger_mode == _MULTI_TRIGGERS_FIRST and lora.trigger_words:
+                trigger_text = lora.trigger_words[0]
+            elif trigger_mode == _MULTI_TRIGGERS_ALL and lora.trigger_words:
+                trigger_text = ", ".join(lora.trigger_words)
+            entries.append(f"{tag} {trigger_text}".strip())
+
+        joined = "|".join(entries)
+        if self._format_combo.currentData() == _FORMAT_SEQUENTIAL:
+            return f"[[{joined}]]"
+        return f"{{{joined}}}"
