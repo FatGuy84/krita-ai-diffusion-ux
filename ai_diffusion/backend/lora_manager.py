@@ -129,6 +129,36 @@ def save_lora_cache(base_url: str, loras: list[LoraInfo]):
         log.warning(f"Could not save LoRA cache: {e}")
 
 
+async def _fetch_favorite_hashes(requests: RequestManager, base: str) -> set[str]:
+    """The regular /list endpoint does not reliably report `favorite`, so query
+    the dedicated favorites_only filter and collect sha256 hashes from that."""
+    hashes: set[str] = set()
+    try:
+        page = 1
+        page_size = 200
+        while True:
+            data = await requests.get(
+                f"{base}/api/lm/loras/list?page={page}&page_size={page_size}&favorites_only=true",
+                timeout=15.0,
+            )
+            if isinstance(data, (bytes, bytearray)):
+                data = json.loads(data)
+            if not isinstance(data, dict):
+                break
+            items = data.get("items") or data.get("loras") or []
+            if not items:
+                break
+            hashes.update(item.get("sha256", "") for item in items)
+            total = data.get("total", page * page_size)
+            actual_page_size = data.get("page_size", page_size)
+            if page * actual_page_size >= total or len(items) < actual_page_size:
+                break
+            page += 1
+    except Exception as e:
+        log.warning(f"Could not fetch LoRA favorites: {e}")
+    return hashes
+
+
 async def fetch_loras_pages(requests: RequestManager, base_url: str):
     """Yield LoRA list incrementally, one server page at a time.
 
@@ -140,6 +170,7 @@ async def fetch_loras_pages(requests: RequestManager, base_url: str):
     # ComfyUI-Lora-Manager (rich metadata: tags, base_model, preview, trigger words)
     # Server caps page_size regardless of what we request, so page through all results.
     try:
+        favorite_hashes = await _fetch_favorite_hashes(requests, base)
         page = 1
         page_size = 200
         got_any = False
@@ -156,6 +187,9 @@ async def fetch_loras_pages(requests: RequestManager, base_url: str):
                 break
             got_any = True
             batch = [LoraInfo.from_api(item, base) for item in items]
+            for lora in batch:
+                if lora.sha256 in favorite_hashes:
+                    lora.favorite = True
             yield batch
             total = data.get("total", page * page_size)
             actual_page_size = data.get("page_size", page_size)
