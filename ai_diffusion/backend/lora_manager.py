@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from pathlib import Path  # noqa: F401 used in fetch_loras fallback
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..util import client_logger as log
@@ -23,18 +23,20 @@ class LoraInfo:
 
     @staticmethod
     def from_api(data: dict, base_url: str) -> LoraInfo:
-        name = data.get("model_name") or data.get("name") or data.get("file_name", "")
+        # ComfyUI-Lora-Manager format: GET /api/lm/loras/list
+        name = data.get("model_name") or data.get("file_name", "")
         file_name = data.get("file_name") or name
         sha256 = data.get("sha256", "")
-        preview = ""
-        if sha256:
-            preview = f"{base_url}/loras/preview/{sha256}"
-        tags = data.get("tags", [])
+        preview = data.get("preview_url", "")
+        if preview and preview.startswith("/"):
+            preview = base_url + preview
+        tags = data.get("tags") or []
         if isinstance(tags, str):
             tags = [t.strip() for t in tags.split(",") if t.strip()]
-        trigger_words = data.get("trained_words", [])
-        if isinstance(trigger_words, str):
-            trigger_words = [t.strip() for t in trigger_words.split(",") if t.strip()]
+        trigger_words = []
+        civitai = data.get("civitai") or {}
+        if isinstance(civitai, dict):
+            trigger_words = civitai.get("trainedWords") or []
         return LoraInfo(
             name=name,
             file_name=file_name,
@@ -54,10 +56,10 @@ _BASE_MODEL_MAP = {
     "sdxl": "sdxl",
     "sd xl": "sdxl",
     "pony": "sdxl",
+    "illustrious": "sdxl",
     "sd3": "sd3",
     "sd 3": "sd3",
     "flux": "flux",
-    "illustrious": "sdxl",
 }
 
 
@@ -74,17 +76,19 @@ async def fetch_loras(requests: RequestManager, base_url: str) -> list[LoraInfo]
     """Fetch LoRA list. Tries ComfyUI-Lora-Manager first, falls back to /models/loras."""
     base = base_url.rstrip("/")
 
-    # Try Lora Manager (rich metadata)
+    # ComfyUI-Lora-Manager (rich metadata: tags, base_model, preview, trigger words)
     try:
-        data = await requests.get(f"{base}/loras?page=1&page_size=10000&load_metadata=true", timeout=10.0)
+        data = await requests.get(f"{base}/api/lm/loras/list?page=1&page_size=10000", timeout=15.0)
         if isinstance(data, (bytes, bytearray)):
             data = json.loads(data)
         if isinstance(data, dict):
-            items = data.get("loras") or data.get("items") or []
+            items = data.get("items") or data.get("loras") or []
             if items:
-                return [LoraInfo.from_api(item, base) for item in items]
-    except Exception:
-        pass
+                result = [LoraInfo.from_api(item, base) for item in items]
+                log.info(f"Loaded {len(result)} LoRAs from Lora Manager")
+                return result
+    except Exception as e:
+        log.warning(f"Lora Manager API not available: {e}")
 
     # Fallback: standard ComfyUI /models/loras (filename list only)
     try:
@@ -113,7 +117,6 @@ async def fetch_preview_bytes(requests: RequestManager, preview_url: str) -> byt
         return None
     try:
         result = await requests.download(preview_url, timeout=8.0)
-        # result is QByteArray from buffer.data()
         return bytes(result) if result else None
     except Exception as e:
         log.warning(f"Could not fetch LoRA preview {preview_url}: {e}")
