@@ -268,11 +268,14 @@ class LoraPickerDialog(QDialog):
         def matches(lora: LoraInfo) -> bool:
             if favorites_only and not lora.favorite:
                 return False
-            if arch and lora.base_model:
-                lora_arch = arch_for_base_model(lora.base_model)
-                if lora_arch and lora_arch != arch:
-                    return False
-            # no base_model info or unmapped → show always
+            if arch:
+                if lora.base_model:
+                    # has base_model info: must match, even if we don't recognize
+                    # the string (otherwise unmapped models like "NoobAI" would
+                    # bypass every arch filter)
+                    if arch_for_base_model(lora.base_model) != arch:
+                        return False
+                # else: no base_model info at all -> can't tell, show anyway
             if active_tag and active_tag != _TAG_ALL:
                 if active_tag not in lora.tags:
                     return False
@@ -297,6 +300,8 @@ class LoraPickerDialog(QDialog):
             )
             if lora.sha256 in self._preview_cache:
                 item.setIcon(self._scaled_icon(lora.sha256))
+            elif lora.preview_url and _is_video_url(lora.preview_url):
+                item.setIcon(theme.icon("play"))
             self._grid.addItem(item)
         if not self._loading:
             self._status.setText(f"{len(self._filtered)} / {len(self._all_loras)} LoRAs")
@@ -341,13 +346,11 @@ class LoraPickerDialog(QDialog):
             lora: LoraInfo = item.data(Qt.ItemDataRole.UserRole)
             if not lora.preview_url or lora.sha256 in self._preview_cache:
                 continue
+            if _is_video_url(lora.preview_url):
+                continue  # handled synchronously in _populate_grid
             if lora.sha256 in self._pending_previews:
                 continue
             self._pending_previews.add(lora.sha256)
-            if _is_video_url(lora.preview_url):
-                # QPixmap can't decode video; show a placeholder instead of trying
-                item.setIcon(theme.icon("play"))
-                continue
             eventloop.run(self._load_preview(lora, item))
 
     async def _load_preview(self, lora: LoraInfo, item: QListWidgetItem):
