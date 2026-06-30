@@ -479,7 +479,7 @@ class LoraPickerDialog(QDialog):
                 trigger_text = ", ".join(lora.trigger_words)
             entries.append(f"{tag} {trigger_text}".strip())
 
-        joined = "|".join(entries)
+        joined = "|\n".join(entries)
         if self._format_combo.currentData() == _FORMAT_SEQUENTIAL:
-            return f"[[{joined}]]"
-        return f"{{{joined}}}"
+            return f"[[\n{joined}\n]]"
+        return f"{{\n{joined}\n}}"
