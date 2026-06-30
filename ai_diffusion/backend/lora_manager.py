@@ -105,7 +105,8 @@ async def fetch_loras(requests: RequestManager, base_url: str) -> list[LoraInfo]
                 break
             result.extend(LoraInfo.from_api(item, base) for item in items)
             total = data.get("total", len(result))
-            if len(result) >= total or len(items) < page_size:
+            actual_page_size = data.get("page_size", page_size)
+            if len(result) >= total or len(items) < actual_page_size:
                 break
             page += 1
         if result:

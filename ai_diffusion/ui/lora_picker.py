@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from PyQt5.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon, QPixmap
 from PyQt5.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
 
 _PREVIEW_SIZE = 96
 _TAG_ALL = "__all__"
-_KNOWN_TAGS = ["character", "style", "concept", "clothing", "pose", "background", "object"]
+_MAX_TAG_BUTTONS = 20
 _ARCH_ANY = "__any__"
 _KNOWN_ARCHES = [
     "sd15", "sdxl", "illu", "sd3", "flux", "flux_k",
@@ -84,20 +85,11 @@ class LoraPickerDialog(QDialog):
         top_layout.addWidget(self._arch_combo)
         top_layout.addWidget(self._refresh_btn)
 
-        # ── tag filter row ──
+        # ── tag filter row (populated dynamically once LoRAs are loaded) ──
         self._tag_buttons: dict[str, QPushButton] = {}
-        tag_layout = QHBoxLayout()
-        tag_layout.setSpacing(4)
-        for tag in [_TAG_ALL] + _KNOWN_TAGS:
-            label = _("All") if tag == _TAG_ALL else tag.capitalize()
-            btn = QPushButton(label, self)
-            btn.setCheckable(True)
-            btn.setChecked(tag == _TAG_ALL)
-            btn.setFlat(True)
-            btn.clicked.connect(lambda checked, t=tag: self._select_tag(t))
-            self._tag_buttons[tag] = btn
-            tag_layout.addWidget(btn)
-        tag_layout.addStretch()
+        self._tag_layout = QHBoxLayout()
+        self._tag_layout.setSpacing(4)
+        self._tag_layout.addStretch()
 
         # ── grid ──
         self._grid = QListWidget(self)
@@ -123,6 +115,12 @@ class LoraPickerDialog(QDialog):
         self._strength.setDecimals(2)
         self._strength.setFixedWidth(72)
 
+        self._include_triggers = QCheckBox(_("+ trigger words"), self)
+        self._include_triggers.setChecked(True)
+        self._include_triggers.setToolTip(
+            _("Also insert this LoRA's trigger words into the prompt")
+        )
+
         self._add_btn = QPushButton(_("Add to Prompt"), self)
         self._add_btn.setEnabled(False)
         self._add_btn.clicked.connect(self._add_to_prompt)
@@ -134,6 +132,7 @@ class LoraPickerDialog(QDialog):
         bottom_layout.addWidget(self._selected_label, 1)
         bottom_layout.addWidget(strength_label)
         bottom_layout.addWidget(self._strength)
+        bottom_layout.addWidget(self._include_triggers)
         bottom_layout.addWidget(self._add_btn)
         bottom_layout.addWidget(close_btn)
 
@@ -143,7 +142,7 @@ class LoraPickerDialog(QDialog):
 
         layout = QVBoxLayout()
         layout.addLayout(top_layout)
-        layout.addLayout(tag_layout)
+        layout.addLayout(self._tag_layout)
         layout.addWidget(self._grid, 1)
         layout.addWidget(self._status)
         layout.addLayout(bottom_layout)
@@ -169,9 +168,36 @@ class LoraPickerDialog(QDialog):
             self._status.setText(_("LoRA Manager not installed or no LoRAs found"))
             return
         self._all_loras = loras
+        self._build_tag_buttons()
         self._apply_filter()
 
     # ── filtering ──
+
+    def _build_tag_buttons(self):
+        # remove old buttons
+        for btn in self._tag_buttons.values():
+            btn.deleteLater()
+        self._tag_buttons.clear()
+
+        counts: dict[str, int] = {}
+        for lora in self._all_loras:
+            for tag in lora.tags:
+                counts[tag] = counts.get(tag, 0) + 1
+        top_tags = sorted(counts, key=lambda t: -counts[t])[:_MAX_TAG_BUTTONS]
+
+        self._active_tag = _TAG_ALL
+        stretch_item = self._tag_layout.takeAt(self._tag_layout.count() - 1)
+        for tag in [_TAG_ALL] + top_tags:
+            label = _("All") if tag == _TAG_ALL else f"{tag} ({counts.get(tag, 0)})"
+            btn = QPushButton(label, self)
+            btn.setCheckable(True)
+            btn.setChecked(tag == _TAG_ALL)
+            btn.setFlat(True)
+            btn.clicked.connect(lambda checked, t=tag: self._select_tag(t))
+            self._tag_buttons[tag] = btn
+            self._tag_layout.addWidget(btn)
+        if stretch_item:
+            self._tag_layout.addItem(stretch_item)
 
     def _select_tag(self, tag: str):
         self._active_tag = tag
@@ -257,12 +283,15 @@ class LoraPickerDialog(QDialog):
             return
         lora: LoraInfo = items[0].data(Qt.ItemDataRole.UserRole)
         strength = self._strength.value()
-        tag = f"<lora:{lora.name}:{strength:.2f}>"
+        parts = [f"<lora:{lora.name}:{strength:.2f}>"]
+        if self._include_triggers.isChecked() and lora.trigger_words:
+            parts.append(", ".join(lora.trigger_words))
+        addition = " ".join(parts)
         model = root.active_model
         if model is None:
             return
         region = model.regions.active_or_root
         current = region.positive
         separator = ", " if current.strip() and not current.rstrip().endswith(",") else ""
-        region.positive = current.rstrip() + separator + tag
+        region.positive = current.rstrip() + separator + addition
         self.lora_selected.emit(lora.name, strength)
