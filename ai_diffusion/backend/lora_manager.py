@@ -31,8 +31,11 @@ class LoraInfo:
     base_model: str = ""
     tags: list[str] = field(default_factory=list)
     preview_url: str = ""
+    # Each entry is one alternative trigger phrase / word group, as reported by
+    # CivitAI - they are alternatives, not meant to be concatenated together.
     trigger_words: list[str] = field(default_factory=list)
     sha256: str = ""
+    favorite: bool = False
 
     @staticmethod
     def from_api(data: dict, base_url: str) -> LoraInfo:
@@ -58,6 +61,7 @@ class LoraInfo:
             tags=tags,
             preview_url=preview,
             trigger_words=trigger_words,
+            favorite=bool(data.get("favorite", False)),
             sha256=sha256,
         )
 

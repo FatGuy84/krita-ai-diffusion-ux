@@ -14,6 +14,7 @@ from PyQt5.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QSizePolicy,
+    QSlider,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -32,7 +33,9 @@ from ..localization import translate as _
 from ..model.root import root
 from . import theme
 
-_PREVIEW_SIZE = 96
+_PREVIEW_SIZE_DEFAULT = 96
+_PREVIEW_SIZE_MIN = 48
+_PREVIEW_SIZE_MAX = 192
 _TAG_ALL = "__all__"
 _MAX_TAG_ENTRIES = 30
 _ARCH_ANY = "__any__"
@@ -50,9 +53,10 @@ class LoraPickerDialog(QDialog):
         self._current_arch = current_arch
         self._all_loras: list[LoraInfo] = []
         self._filtered: list[LoraInfo] = []
-        self._preview_cache: dict[str, QPixmap] = {}
+        self._preview_cache: dict[str, QPixmap] = {}  # original, unscaled
         self._pending_previews: set[str] = set()
         self._loading = False
+        self._preview_size = _PREVIEW_SIZE_DEFAULT
 
         self.setWindowTitle(_("LoRA Browser"))
         self.setMinimumSize(640, 480)
@@ -90,17 +94,31 @@ class LoraPickerDialog(QDialog):
         self._tag_combo.addItem(_("All"), _TAG_ALL)
         self._tag_combo.currentIndexChanged.connect(self._apply_filter)
 
+        self._favorites_only = QCheckBox(_("Favorites"), self)
+        self._favorites_only.toggled.connect(self._apply_filter)
+
+        size_label = QLabel(_("Size:"), self)
+        self._size_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self._size_slider.setMinimum(_PREVIEW_SIZE_MIN)
+        self._size_slider.setMaximum(_PREVIEW_SIZE_MAX)
+        self._size_slider.setValue(_PREVIEW_SIZE_DEFAULT)
+        self._size_slider.setFixedWidth(90)
+        self._size_slider.valueChanged.connect(self._on_preview_size_changed)
+
         row2 = QHBoxLayout()
         row2.addWidget(arch_label)
         row2.addWidget(self._arch_combo, 1)
         row2.addWidget(tag_label)
         row2.addWidget(self._tag_combo, 1)
+        row2.addWidget(self._favorites_only)
+        row2.addWidget(size_label)
+        row2.addWidget(self._size_slider)
 
         # ── grid ──
         self._grid = QListWidget(self)
         self._grid.setViewMode(QListWidget.ViewMode.IconMode)
-        self._grid.setIconSize(QSize(_PREVIEW_SIZE, _PREVIEW_SIZE))
-        self._grid.setGridSize(QSize(_PREVIEW_SIZE + 16, _PREVIEW_SIZE + 40))
+        self._grid.setIconSize(QSize(self._preview_size, self._preview_size))
+        self._grid.setGridSize(QSize(self._preview_size + 16, self._preview_size + 40))
         self._grid.setResizeMode(QListWidget.ResizeMode.Adjust)
         self._grid.setMovement(QListWidget.Movement.Static)
         self._grid.setWordWrap(True)
@@ -126,10 +144,17 @@ class LoraPickerDialog(QDialog):
         self._strength.setDecimals(2)
         self._strength.setFixedWidth(72)
 
-        self._include_triggers = QCheckBox(_("+ trigger words"), self)
+        self._include_triggers = QCheckBox(_("+ triggers:"), self)
         self._include_triggers.setChecked(True)
         self._include_triggers.setToolTip(
-            _("Also insert this LoRA's trigger words into the prompt")
+            _("Also insert the selected trigger word group into the prompt")
+        )
+        self._include_triggers.toggled.connect(self._update_trigger_combo_enabled)
+
+        self._trigger_combo = QComboBox(self)
+        self._trigger_combo.setMinimumWidth(160)
+        self._trigger_combo.setToolTip(
+            _("CivitAI lists alternative trigger phrases - pick which one to insert")
         )
 
         self._add_btn = QPushButton(_("Add to Prompt"), self)
@@ -144,6 +169,7 @@ class LoraPickerDialog(QDialog):
         bottom_layout.addWidget(strength_label)
         bottom_layout.addWidget(self._strength)
         bottom_layout.addWidget(self._include_triggers)
+        bottom_layout.addWidget(self._trigger_combo)
         bottom_layout.addWidget(self._add_btn)
         bottom_layout.addWidget(close_btn)
 
@@ -228,8 +254,11 @@ class LoraPickerDialog(QDialog):
         arch = self._arch_combo.currentData()
         arch = "" if arch == _ARCH_ANY else (arch or "")
         active_tag = self._tag_combo.currentData()
+        favorites_only = self._favorites_only.isChecked()
 
         def matches(lora: LoraInfo) -> bool:
+            if favorites_only and not lora.favorite:
+                return False
             if arch and lora.base_model:
                 lora_arch = arch_for_base_model(lora.base_model)
                 if lora_arch and lora_arch != arch:
@@ -252,15 +281,37 @@ class LoraPickerDialog(QDialog):
         for lora in self._filtered:
             item = QListWidgetItem(lora.display_name or lora.name)
             item.setData(Qt.ItemDataRole.UserRole, lora)
+            fav = "★ " if lora.favorite else ""
             item.setToolTip(
-                f"{lora.display_name}\nFile: {lora.name}\nBase: {lora.base_model or '?'}\n"
-                + (f"Triggers: {', '.join(lora.trigger_words)}" if lora.trigger_words else "")
+                f"{fav}{lora.display_name}\nFile: {lora.name}\nBase: {lora.base_model or '?'}\n"
+                + (f"Triggers: {' | '.join(lora.trigger_words)}" if lora.trigger_words else "")
             )
             if lora.sha256 in self._preview_cache:
-                item.setIcon(QIcon(self._preview_cache[lora.sha256]))
+                item.setIcon(self._scaled_icon(lora.sha256))
             self._grid.addItem(item)
         if not self._loading:
             self._status.setText(f"{len(self._filtered)} / {len(self._all_loras)} LoRAs")
+        self._schedule_visible_previews()
+
+    def _scaled_icon(self, sha256: str) -> QIcon:
+        pixmap = self._preview_cache[sha256]
+        scaled = pixmap.scaled(
+            self._preview_size,
+            self._preview_size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        return QIcon(scaled)
+
+    def _on_preview_size_changed(self, value: int):
+        self._preview_size = value
+        self._grid.setIconSize(QSize(value, value))
+        self._grid.setGridSize(QSize(value + 16, value + 40))
+        for i in range(self._grid.count()):
+            item = self._grid.item(i)
+            lora: LoraInfo = item.data(Qt.ItemDataRole.UserRole)
+            if lora.sha256 in self._preview_cache:
+                item.setIcon(self._scaled_icon(lora.sha256))
         self._schedule_visible_previews()
 
     # ── lazy preview loading (only visible items) ──
@@ -295,14 +346,8 @@ class LoraPickerDialog(QDialog):
             pixmap = QPixmap()
             pixmap.loadFromData(data)
             if not pixmap.isNull():
-                pixmap = pixmap.scaled(
-                    _PREVIEW_SIZE,
-                    _PREVIEW_SIZE,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
                 self._preview_cache[lora.sha256] = pixmap
-                item.setIcon(QIcon(pixmap))
+                item.setIcon(self._scaled_icon(lora.sha256))
 
     # ── selection / insertion ──
 
@@ -310,11 +355,21 @@ class LoraPickerDialog(QDialog):
         items = self._grid.selectedItems()
         if items:
             lora: LoraInfo = items[0].data(Qt.ItemDataRole.UserRole)
-            self._selected_label.setText(f"{lora.display_name}  [{lora.base_model or '?'}]")
+            fav = "★ " if lora.favorite else ""
+            self._selected_label.setText(f"{fav}{lora.display_name}  [{lora.base_model or '?'}]")
             self._add_btn.setEnabled(True)
+            self._trigger_combo.clear()
+            for group in lora.trigger_words:
+                self._trigger_combo.addItem(group, group)
+            self._update_trigger_combo_enabled()
         else:
             self._selected_label.setText(_("No LoRA selected"))
             self._add_btn.setEnabled(False)
+            self._trigger_combo.clear()
+
+    def _update_trigger_combo_enabled(self):
+        enabled = self._include_triggers.isChecked() and self._trigger_combo.count() > 0
+        self._trigger_combo.setEnabled(enabled)
 
     def _add_to_prompt(self):
         items = self._grid.selectedItems()
@@ -323,8 +378,8 @@ class LoraPickerDialog(QDialog):
         lora: LoraInfo = items[0].data(Qt.ItemDataRole.UserRole)
         strength = self._strength.value()
         parts = [f"<lora:{lora.name}:{strength:.2f}>"]
-        if self._include_triggers.isChecked() and lora.trigger_words:
-            parts.append(", ".join(lora.trigger_words))
+        if self._include_triggers.isChecked() and self._trigger_combo.currentData():
+            parts.append(self._trigger_combo.currentData())
         addition = " ".join(parts)
         model = root.active_model
         if model is None:
