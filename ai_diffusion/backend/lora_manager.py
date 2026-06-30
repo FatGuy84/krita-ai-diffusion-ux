@@ -48,25 +48,35 @@ class LoraInfo:
         )
 
 
-# base_model strings from Lora Manager → Arch enum value name
-_BASE_MODEL_MAP = {
-    "sd 1": "sd15",
-    "sd1": "sd15",
-    "v1": "sd15",
-    "sdxl": "sdxl",
-    "sd xl": "sdxl",
-    "pony": "sdxl",
-    "illustrious": "sdxl",
-    "sd3": "sd3",
-    "sd 3": "sd3",
-    "flux": "flux",
-}
+# base_model strings (as stored by ComfyUI-Lora-Manager metadata) → Arch enum value name
+# Longer/more specific keys must come before shorter ones they overlap with
+# (e.g. "illustrious" before "sd xl", "flux kontext" before "flux").
+_BASE_MODEL_MAP = [
+    ("illustrious", "illu"),
+    ("pony", "sdxl"),
+    ("sdxl", "sdxl"),
+    ("sd xl", "sdxl"),
+    ("sd 1", "sd15"),
+    ("sd1", "sd15"),
+    ("v1", "sd15"),
+    ("sd 3", "sd3"),
+    ("sd3", "sd3"),
+    ("flux kontext", "flux_k"),
+    ("flux", "flux"),
+    ("chroma", "chroma"),
+    ("qwen", "qwen"),
+    ("anima", "anima"),
+    ("z-image", "zimage"),
+    ("zimage", "zimage"),
+    ("ernie", "ernie"),
+    ("krea", "krea2"),
+]
 
 
 def arch_for_base_model(base_model: str) -> str:
     """Return Arch enum name (e.g. 'sdxl') for a base_model string, or '' if unknown."""
     lower = base_model.lower()
-    for key, arch in _BASE_MODEL_MAP.items():
+    for key, arch in _BASE_MODEL_MAP:
         if key in lower:
             return arch
     return ""

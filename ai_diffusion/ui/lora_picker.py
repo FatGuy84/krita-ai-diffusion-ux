@@ -36,7 +36,10 @@ _PREVIEW_SIZE = 96
 _TAG_ALL = "__all__"
 _KNOWN_TAGS = ["character", "style", "concept", "clothing", "pose", "background", "object"]
 _ARCH_ANY = "__any__"
-_KNOWN_ARCHES = ["sd15", "sdxl", "sd3", "flux"]
+_KNOWN_ARCHES = [
+    "sd15", "sdxl", "illu", "sd3", "flux", "flux_k",
+    "chroma", "qwen", "anima", "zimage", "ernie", "krea2",
+]
 
 
 class LoraPickerDialog(QDialog):
