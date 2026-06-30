@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 
 _STRIP_SUFFIXES = (".safetensors", ".pt", ".ckpt", ".bin")
 _CACHE_MAX_AGE = 6 * 3600  # seconds
+# Bump when the cached data shape/semantics change, to invalidate old caches
+# written before a fix (e.g. the favorite flag used to always be False).
+_CACHE_VERSION = 2
 
 
 def _clean_name(file_name: str) -> str:
@@ -112,6 +115,8 @@ def load_cached_loras(base_url: str) -> list[LoraInfo] | None:
         if not path.exists():
             return None
         data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("version") != _CACHE_VERSION:
+            return None
         if time.time() - data.get("timestamp", 0) > _CACHE_MAX_AGE:
             return None
         return [LoraInfo(**item) for item in data.get("loras", [])]
@@ -123,7 +128,7 @@ def load_cached_loras(base_url: str) -> list[LoraInfo] | None:
 def save_lora_cache(base_url: str, loras: list[LoraInfo]):
     path = _cache_path(base_url)
     try:
-        data = {"timestamp": time.time(), "loras": [asdict(l) for l in loras]}
+        data = {"version": _CACHE_VERSION, "timestamp": time.time(), "loras": [asdict(l) for l in loras]}
         path.write_text(json.dumps(data), encoding="utf-8")
     except Exception as e:
         log.warning(f"Could not save LoRA cache: {e}")

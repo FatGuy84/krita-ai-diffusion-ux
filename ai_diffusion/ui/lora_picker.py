@@ -44,6 +44,14 @@ _KNOWN_ARCHES = [
     "sd15", "sdxl", "illu", "sd3", "flux", "flux_k",
     "chroma", "qwen", "anima", "zimage", "ernie", "krea2",
 ]
+_VIDEO_EXTENSIONS = (".mp4", ".webm", ".mov")
+
+
+def _is_video_url(url: str) -> bool:
+    # the real filename is in the `path` query param (e.g. /api/lm/previews?path=...mp4),
+    # so check the whole url rather than stripping the query string
+    lower = url.lower()
+    return any(lower.endswith(ext) for ext in _VIDEO_EXTENSIONS)
 
 
 class LoraPickerDialog(QDialog):
@@ -336,6 +344,10 @@ class LoraPickerDialog(QDialog):
             if lora.sha256 in self._pending_previews:
                 continue
             self._pending_previews.add(lora.sha256)
+            if _is_video_url(lora.preview_url):
+                # QPixmap can't decode video; show a placeholder instead of trying
+                item.setIcon(theme.icon("play"))
+                continue
             eventloop.run(self._load_preview(lora, item))
 
     async def _load_preview(self, lora: LoraInfo, item: QListWidgetItem):
@@ -349,6 +361,9 @@ class LoraPickerDialog(QDialog):
             if not pixmap.isNull():
                 self._preview_cache[lora.sha256] = pixmap
                 item.setIcon(self._scaled_icon(lora.sha256))
+            else:
+                # format not decodable by Qt (e.g. some animated webp builds) - placeholder
+                item.setIcon(theme.icon("filter"))
 
     # ── selection / insertion ──
 
