@@ -431,8 +431,10 @@ class HistoryWidget(QListWidget):
         if item is not None:
             job = self._model.jobs.find(self._item_data(item).job)
             menu = QMenu(self)
-            menu.addAction(_("Copy Prompt"), self._copy_prompt)
-            menu.addAction(_("Copy Prompt (Evaluated)"), self._copy_prompt_evaluated)
+            menu.addAction(_("Apply Prompt to Field"), self._apply_prompt_to_field)
+            menu.addAction(_("Apply Prompt (Evaluated) to Field"), self._apply_prompt_evaluated_to_field)
+            menu.addAction(_("Copy Prompt to Clipboard"), self._copy_prompt_to_clipboard)
+            menu.addAction(_("Copy Prompt (Evaluated) to Clipboard"), self._copy_prompt_evaluated_to_clipboard)
             menu.addAction(_("Copy Strength"), self._copy_strength)
             style_action = ensure(menu.addAction(_("Copy Style"), self._copy_style))
             if job is None or Styles.list().find(job.params.style) is None:
@@ -458,7 +460,7 @@ class HistoryWidget(QListWidget):
         pos.setY(pos.y() + self._context_button.height())
         self._show_context_menu(pos)
 
-    def _copy_prompt(self, evaluated=False):
+    def _apply_prompt_to_field(self, evaluated=False):
         if job := self.selected_job:
             positive = "prompt_eval" if evaluated else "prompt"
             prompt = job.params.metadata.get(positive, job.params.prompt)
@@ -469,15 +471,21 @@ class HistoryWidget(QListWidget):
                 active.negative = job.params.metadata.get(
                     negative, job.params.metadata.get("negative_prompt", "")
                 )
-
-            if clipboard := QGuiApplication.clipboard():
-                clipboard.setText(prompt)
-
             if self._model.workspace is Workspace.custom and self._model.document.is_active:
                 self._model.custom.try_set_params(job.params.metadata)
 
-    def _copy_prompt_evaluated(self):
-        self._copy_prompt(evaluated=True)
+    def _apply_prompt_evaluated_to_field(self):
+        self._apply_prompt_to_field(evaluated=True)
+
+    def _copy_prompt_to_clipboard(self, evaluated=False):
+        if job := self.selected_job:
+            positive = "prompt_eval" if evaluated else "prompt"
+            prompt = job.params.metadata.get(positive, job.params.prompt)
+            if clipboard := QGuiApplication.clipboard():
+                clipboard.setText(prompt)
+
+    def _copy_prompt_evaluated_to_clipboard(self):
+        self._copy_prompt_to_clipboard(evaluated=True)
 
     def _copy_strength(self):
         if job := self.selected_job:
