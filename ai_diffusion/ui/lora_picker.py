@@ -38,6 +38,7 @@ _PREVIEW_SIZE_MIN = 48
 _PREVIEW_SIZE_MAX = 192
 _TAG_ALL = "__all__"
 _MAX_TAG_ENTRIES = 30
+_TRIGGER_ALL = "__all_triggers__"
 _ARCH_ANY = "__any__"
 _KNOWN_ARCHES = [
     "sd15", "sdxl", "illu", "sd3", "flux", "flux_k",
@@ -359,8 +360,11 @@ class LoraPickerDialog(QDialog):
             self._selected_label.setText(f"{fav}{lora.display_name}  [{lora.base_model or '?'}]")
             self._add_btn.setEnabled(True)
             self._trigger_combo.clear()
-            for group in lora.trigger_words:
-                self._trigger_combo.addItem(group, group)
+            if lora.trigger_words:
+                self._trigger_combo.addItem(_("All"), _TRIGGER_ALL)
+                for group in lora.trigger_words:
+                    self._trigger_combo.addItem(group, group)
+                self._trigger_combo.setCurrentIndex(0)
             self._update_trigger_combo_enabled()
         else:
             self._selected_label.setText(_("No LoRA selected"))
@@ -379,13 +383,17 @@ class LoraPickerDialog(QDialog):
         strength = self._strength.value()
         parts = [f"<lora:{lora.name}:{strength:.2f}>"]
         if self._include_triggers.isChecked() and self._trigger_combo.currentData():
-            parts.append(self._trigger_combo.currentData())
+            selected = self._trigger_combo.currentData()
+            if selected == _TRIGGER_ALL:
+                parts.append("\n----\n".join(lora.trigger_words))
+            else:
+                parts.append(selected)
         addition = " ".join(parts)
         model = root.active_model
         if model is None:
             return
         region = model.regions.active_or_root
         current = region.positive
-        separator = ", " if current.strip() and not current.rstrip().endswith(",") else ""
-        region.positive = current.rstrip() + separator + addition
+        # always add the lora on its own new line at the end of the prompt
+        region.positive = current.rstrip("\n") + "\n" + addition
         self.lora_selected.emit(lora.name, strength)
