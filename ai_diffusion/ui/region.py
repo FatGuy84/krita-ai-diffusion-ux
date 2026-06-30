@@ -26,6 +26,7 @@ from ..model.root import root
 from ..util import ensure
 from . import theme
 from .control import ControlListWidget
+from .lora_picker import LoraPickerDialog
 from .settings import settings
 from .widget import TextPromptWidget
 
@@ -193,6 +194,14 @@ class ActiveRegionWidget(QFrame):
         self._negative_warning.setPixmap(theme.icon("alert").pixmap(font_height, font_height))
         self._negative_warning.setToolTip(_("The selected Style does not use the negative prompt."))
         self._negative_warning.setVisible(False)
+
+        self._lora_browse_button = QToolButton(self)
+        self._lora_browse_button.setIcon(theme.icon("filter"))
+        self._lora_browse_button.setToolTip(_("Browse and add LoRAs"))
+        self._lora_browse_button.setStyleSheet(
+            "QToolButton { background: #40808080; border: 1px solid #60808080; border-radius: 2px; }"
+        )
+        self._lora_browse_button.clicked.connect(self._open_lora_picker)
 
         self._setup_bindings(self._region)
         settings.changed.connect(self.update_settings)
@@ -424,6 +433,13 @@ class ActiveRegionWidget(QFrame):
         self._show_negative_warning()
 
     def _layout_language_button(self):
+        # LoRA browse button — top-right corner of positive prompt
+        btn_s = self.fontMetrics().height() + 2
+        pos_geo = self.positive.geometry()
+        self._lora_browse_button.move(pos_geo.right() - btn_s - 2, pos_geo.top() + 2)
+        self._lora_browse_button.resize(QSize(btn_s, btn_s))
+        self._lora_browse_button.raise_()
+
         if settings.prompt_translation:
             pos = self.positive.geometry().bottomRight()
             if self.has_negative:
@@ -469,6 +485,12 @@ class ActiveRegionWidget(QFrame):
             else:
                 settings.prompt_line_count = new_line_count
             self._update_prompt_widgets()
+
+    def _open_lora_picker(self):
+        model = root.active_model
+        arch = model.arch.name if model else ""
+        dialog = LoraPickerDialog(arch, parent=self)
+        dialog.exec_()
 
     def resizeEvent(self, a0):
         super().resizeEvent(a0)
