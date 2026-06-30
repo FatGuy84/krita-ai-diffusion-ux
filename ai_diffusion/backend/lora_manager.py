@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path  # noqa: F401 used in fetch_loras fallback
 from typing import TYPE_CHECKING
 
 from ..util import client_logger as log
@@ -71,20 +71,40 @@ def arch_for_base_model(base_model: str) -> str:
 
 
 async def fetch_loras(requests: RequestManager, base_url: str) -> list[LoraInfo]:
-    """Fetch LoRA list from ComfyUI-Lora-Manager. Returns [] if not installed."""
-    url = base_url.rstrip("/") + "/loras?page=1&page_size=10000&load_metadata=true"
+    """Fetch LoRA list. Tries ComfyUI-Lora-Manager first, falls back to /models/loras."""
+    base = base_url.rstrip("/")
+
+    # Try Lora Manager (rich metadata)
     try:
-        data = await requests.get(url, timeout=10.0)
+        data = await requests.get(f"{base}/loras?page=1&page_size=10000&load_metadata=true", timeout=10.0)
+        if isinstance(data, (bytes, bytearray)):
+            data = json.loads(data)
+        if isinstance(data, dict):
+            items = data.get("loras") or data.get("items") or []
+            if items:
+                return [LoraInfo.from_api(item, base) for item in items]
+    except Exception:
+        pass
+
+    # Fallback: standard ComfyUI /models/loras (filename list only)
+    try:
+        data = await requests.get(f"{base}/models/loras", timeout=10.0)
         if isinstance(data, (bytes, bytearray)):
             data = json.loads(data)
         if isinstance(data, list):
-            items = data
-        else:
-            items = data.get("loras") or data.get("items") or []
-        return [LoraInfo.from_api(item, base_url.rstrip("/")) for item in items]
+            result = []
+            for entry in data:
+                if isinstance(entry, str):
+                    name = Path(entry).stem
+                    result.append(LoraInfo(name=name, file_name=entry))
+                elif isinstance(entry, dict):
+                    result.append(LoraInfo.from_api(entry, base))
+            log.info(f"Loaded {len(result)} LoRAs from /models/loras (no metadata)")
+            return result
     except Exception as e:
-        log.warning(f"LoRA Manager not available: {e}")
-        return []
+        log.warning(f"Could not fetch LoRA list: {e}")
+
+    return []
 
 
 async def fetch_preview_bytes(requests: RequestManager, preview_url: str) -> bytes | None:

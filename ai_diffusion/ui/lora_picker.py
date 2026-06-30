@@ -174,6 +174,7 @@ class LoraPickerDialog(QDialog):
                 lora_arch = arch_for_base_model(lora.base_model)
                 if lora_arch and lora_arch != arch:
                     return False
+            # no base_model info → show always
             if self._active_tag != _TAG_ALL:
                 if not any(self._active_tag in t.lower() for t in lora.tags):
                     return False
