@@ -166,7 +166,9 @@ class Connection(QObject, ObservableProperties):
     def refresh(self):
         async def _refresh():
             await self.client.refresh()
+            self.missing_resources = self.client.missing_resources
             self.models_changed.emit()
+            self.state_changed.emit(self.state)
 
         if self.state is ConnectionState.connected:
             eventloop.run(_refresh())
