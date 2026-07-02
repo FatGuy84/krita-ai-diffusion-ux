@@ -97,7 +97,7 @@ class LoraPickerDialog(QDialog):
         arch_label = QLabel(_("Base Model:"), self)
         self._arch_combo = QComboBox(self)
         self._arch_combo.addItem(_("Any"), _ARCH_ANY)
-        for arch in _KNOWN_ARCHES:
+        for arch in sorted(_KNOWN_ARCHES):
             self._arch_combo.addItem(arch, arch)
         idx = self._arch_combo.findData(current_arch)
         self._arch_combo.setCurrentIndex(idx if idx >= 0 else 0)
