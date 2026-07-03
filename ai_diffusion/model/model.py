@@ -345,7 +345,9 @@ class DocumentModel(QObject, ObservableProperties):
             queue_mode = QueueMode.back
 
         prompt_lora_names_0 = {l.name for l in (prompt_loras_0 or [])}
-        base_loras = [l for l in input.models.loras if l.name not in prompt_lora_names_0]
+        base_loras = [
+            l for l in (input.models.loras if input.models else []) if l.name not in prompt_lora_names_0
+        ]
 
         for i in range(count):
             seed = sampling.seed + i * settings.batch_size
