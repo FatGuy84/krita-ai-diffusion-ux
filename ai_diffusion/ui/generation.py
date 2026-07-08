@@ -442,6 +442,7 @@ class HistoryWidget(QListWidget):
             menu.addAction(_("Copy Seed"), self._copy_seed)
             menu.addAction(_("Info to Clipboard"), self._info_to_clipboard)
             menu.addSeparator()
+            menu.addAction(_("Save to Eagle"), self._save_to_eagle)
             save_action = ensure(menu.addAction(_("Save Image"), self._save_image))
             if self._model.document.filename == "":
                 tt = _(
@@ -514,6 +515,12 @@ class HistoryWidget(QListWidget):
         for item in items:
             job_id, image_index = self.item_info(item)
             self._model.save_result(job_id, image_index)
+
+    def _save_to_eagle(self):
+        items = self.selectedItems()
+        for item in items:
+            job_id, image_index = self.item_info(item)
+            self._model.send_result_to_eagle(job_id, image_index)
 
     def _discard_image(self, confirm=True):
         confirm = confirm and settings.confirm_discard_image

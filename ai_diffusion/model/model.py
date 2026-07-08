@@ -947,6 +947,22 @@ class DocumentModel(QObject, ObservableProperties):
     def save_result(self, job_id: str, index: int):
         _save_job_result(self, self.jobs.find(job_id), index)
 
+    def send_result_to_eagle(self, job_id: str, index: int):
+        from ..eagle import send_image_to_eagle
+
+        job = self.jobs.find(job_id)
+        assert job is not None, "Cannot send result, invalid job id"
+        assert len(job.results) > index, "Cannot send result, invalid result index"
+        base_image = self._get_current_image(Bounds(0, 0, *self.document.extent))
+        base_image.draw_image(job.results[index], job.params.bounds.offset)
+
+        async def _send():
+            error = await send_image_to_eagle(base_image, job, index)
+            if error:
+                self.report_error(error)
+
+        eventloop.run(_send())
+
     def resolve_inpaint_mode(self):
         if self.inpaint.mode is InpaintMode.automatic:
             if bounds := self.document.selection_bounds:
