@@ -1,8 +1,8 @@
 {
  "id": "6361f484-6432-4e6f-b2c3-2f763292f3de",
  "revision": 0,
- "last_node_id": 92,
- "last_link_id": 166,
+ "last_node_id": 98,
+ "last_link_id": 173,
  "nodes": [
   {
    "id": 29,
@@ -478,7 +478,7 @@
      "name": "MODEL",
      "type": "MODEL",
      "links": [
-      128
+      167
      ]
     }
    ],
@@ -617,7 +617,7 @@
      "localized_name": "model",
      "name": "model",
      "type": "MODEL",
-     "link": 128
+     "link": 173
     },
     {
      "localized_name": "source_latent",
@@ -1266,6 +1266,418 @@
     384,
     768
    ]
+  },
+  {
+   "id": 93,
+   "type": "LoraLoaderModelOnly",
+   "pos": [
+    1650,
+    1400
+   ],
+   "size": [
+    300,
+    120
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "MODEL",
+     "link": 167
+    },
+    {
+     "name": "lora_name",
+     "type": "COMBO",
+     "widget": {
+      "name": "lora_name"
+     },
+     "link": 168
+    },
+    {
+     "name": "strength_model",
+     "type": "FLOAT",
+     "widget": {
+      "name": "strength_model"
+     },
+     "link": 169
+    }
+   ],
+   "outputs": [
+    {
+     "name": "MODEL",
+     "type": "MODEL",
+     "links": [
+      170
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LoraLoaderModelOnly"
+   },
+   "widgets_values": [
+    "krea2_identity_edit_v1_1.safetensors",
+    0.0
+   ]
+  },
+  {
+   "id": 94,
+   "type": "ETN_Parameter",
+   "pos": [
+    1300,
+    1400
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "name",
+     "type": "STRING",
+     "widget": {
+      "name": "name"
+     },
+     "link": null
+    },
+    {
+     "name": "type",
+     "type": "COMBO",
+     "widget": {
+      "name": "type"
+     },
+     "link": null
+    },
+    {
+     "name": "default",
+     "type": "STRING",
+     "widget": {
+      "name": "default"
+     },
+     "link": null
+    },
+    {
+     "name": "min",
+     "type": "FLOAT",
+     "widget": {
+      "name": "min"
+     },
+     "link": null
+    },
+    {
+     "name": "max",
+     "type": "FLOAT",
+     "widget": {
+      "name": "max"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "value",
+     "type": "*",
+     "links": [
+      168
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "ETN_Parameter"
+   },
+   "widgets_values": [
+    "LoRA 1",
+    "choice",
+    "",
+    -10000000000.0,
+    10000000000.0
+   ]
+  },
+  {
+   "id": 95,
+   "type": "ETN_Parameter",
+   "pos": [
+    1300,
+    1580
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "name",
+     "type": "STRING",
+     "widget": {
+      "name": "name"
+     },
+     "link": null
+    },
+    {
+     "name": "type",
+     "type": "COMBO",
+     "widget": {
+      "name": "type"
+     },
+     "link": null
+    },
+    {
+     "name": "default",
+     "type": "STRING",
+     "widget": {
+      "name": "default"
+     },
+     "link": null
+    },
+    {
+     "name": "min",
+     "type": "FLOAT",
+     "widget": {
+      "name": "min"
+     },
+     "link": null
+    },
+    {
+     "name": "max",
+     "type": "FLOAT",
+     "widget": {
+      "name": "max"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "value",
+     "type": "*",
+     "links": [
+      169
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "ETN_Parameter"
+   },
+   "widgets_values": [
+    "LoRA 1 Strength",
+    "number",
+    0.0,
+    0.0,
+    2.0
+   ]
+  },
+  {
+   "id": 96,
+   "type": "LoraLoaderModelOnly",
+   "pos": [
+    1650,
+    1800
+   ],
+   "size": [
+    300,
+    120
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "MODEL",
+     "link": 170
+    },
+    {
+     "name": "lora_name",
+     "type": "COMBO",
+     "widget": {
+      "name": "lora_name"
+     },
+     "link": 171
+    },
+    {
+     "name": "strength_model",
+     "type": "FLOAT",
+     "widget": {
+      "name": "strength_model"
+     },
+     "link": 172
+    }
+   ],
+   "outputs": [
+    {
+     "name": "MODEL",
+     "type": "MODEL",
+     "links": [
+      173
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LoraLoaderModelOnly"
+   },
+   "widgets_values": [
+    "krea2_identity_edit_v1_1.safetensors",
+    0.0
+   ]
+  },
+  {
+   "id": 97,
+   "type": "ETN_Parameter",
+   "pos": [
+    1300,
+    1800
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "name",
+     "type": "STRING",
+     "widget": {
+      "name": "name"
+     },
+     "link": null
+    },
+    {
+     "name": "type",
+     "type": "COMBO",
+     "widget": {
+      "name": "type"
+     },
+     "link": null
+    },
+    {
+     "name": "default",
+     "type": "STRING",
+     "widget": {
+      "name": "default"
+     },
+     "link": null
+    },
+    {
+     "name": "min",
+     "type": "FLOAT",
+     "widget": {
+      "name": "min"
+     },
+     "link": null
+    },
+    {
+     "name": "max",
+     "type": "FLOAT",
+     "widget": {
+      "name": "max"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "value",
+     "type": "*",
+     "links": [
+      171
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "ETN_Parameter"
+   },
+   "widgets_values": [
+    "LoRA 2",
+    "choice",
+    "",
+    -10000000000.0,
+    10000000000.0
+   ]
+  },
+  {
+   "id": 98,
+   "type": "ETN_Parameter",
+   "pos": [
+    1300,
+    1980
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "name",
+     "type": "STRING",
+     "widget": {
+      "name": "name"
+     },
+     "link": null
+    },
+    {
+     "name": "type",
+     "type": "COMBO",
+     "widget": {
+      "name": "type"
+     },
+     "link": null
+    },
+    {
+     "name": "default",
+     "type": "STRING",
+     "widget": {
+      "name": "default"
+     },
+     "link": null
+    },
+    {
+     "name": "min",
+     "type": "FLOAT",
+     "widget": {
+      "name": "min"
+     },
+     "link": null
+    },
+    {
+     "name": "max",
+     "type": "FLOAT",
+     "widget": {
+      "name": "max"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "value",
+     "type": "*",
+     "links": [
+      172
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "ETN_Parameter"
+   },
+   "widgets_values": [
+    "LoRA 2 Strength",
+    "number",
+    0.0,
+    0.0,
+    2.0
+   ]
   }
  ],
  "links": [
@@ -1308,14 +1720,6 @@
    73,
    1,
    "VAE"
-  ],
-  [
-   128,
-   71,
-   0,
-   79,
-   0,
-   "MODEL"
   ],
   [
    129,
@@ -1500,6 +1904,62 @@
    84,
    3,
    "INT"
+  ],
+  [
+   167,
+   71,
+   0,
+   93,
+   0,
+   "MODEL"
+  ],
+  [
+   168,
+   94,
+   0,
+   93,
+   1,
+   "COMBO"
+  ],
+  [
+   169,
+   95,
+   0,
+   93,
+   2,
+   "FLOAT"
+  ],
+  [
+   170,
+   93,
+   0,
+   96,
+   0,
+   "MODEL"
+  ],
+  [
+   171,
+   97,
+   0,
+   96,
+   1,
+   "COMBO"
+  ],
+  [
+   172,
+   98,
+   0,
+   96,
+   2,
+   "FLOAT"
+  ],
+  [
+   173,
+   96,
+   0,
+   79,
+   0,
+   "MODEL"
   ]
  ],
  "groups": [],
