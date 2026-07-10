@@ -1,6 +1,99 @@
-<h1><img width="64px" src="ai_diffusion/icons/logo-128.png"> Generative AI <i>for Krita</i></h1>
+<h1><img width="64px" src="ai_diffusion/icons/logo-128.png"> Generative AI <i>for Krita</i> — UX Edition</h1>
 
-✨[Features](#features) | ⭳ [Download](https://github.com/Acly/krita-ai-diffusion/releases/latest) | 🛠️[Installation](https://docs.interstice.cloud/installation) | 🎞️ [Video](https://youtu.be/Ly6USRwTHe0) | 🖼️[Gallery](#gallery) | 📖[User Guide](https://docs.interstice.cloud) | 💬[Discussion](https://github.com/Acly/krita-ai-diffusion/discussions) | 🗣️[Discord](https://discord.gg/pWyzHfHHhU)
+A usability-focused fork of the [Krita AI Diffusion plugin](https://github.com/Acly/krita-ai-diffusion)
+with numerous quality-of-life improvements for prompt handling, LoRA management
+and batch generation workflows.
+
+All credit for the plugin itself goes to [Acly](https://github.com/Acly) and the
+upstream contributors — this fork only layers UX improvements on top and tracks
+upstream releases (currently based on v1.52.1).
+
+**This fork is for you if:**
+
+* you work with large LoRA collections and want to browse them visually
+  (previews, tags, favorites) instead of memorizing file names
+* you generate batches and want systematic control over which prompt/LoRA
+  combination each batch item uses
+* you want prompt history actions, batch sizing and image export to be less
+  clicky and more predictable
+
+## What's different from upstream
+
+### Sequential wildcards & batch control
+* **Sequential wildcard syntax `[[a|b|c]]`**: unlike the random `{a|b|c}` syntax,
+  options are consumed in order across a batch — batch item 1 gets `a`, item 2
+  gets `b`, and so on. Multiple `[[...]]` groups form a **Cartesian product**
+  (`[[black|white]] [[cat|dog]]` generates all 4 combinations).
+* **LoRAs inside wildcards**: `<lora:...>` tags inside `[[...]]` groups are
+  correctly switched per batch item — each image is generated with its own LoRA
+  set, not just the first one.
+* **Batch count up to 100** (upstream: 10) with an editable spinbox, plus a
+  one-click button that sets the batch count to the number of sequential
+  wildcard combinations in the prompt.
+
+### LoRA Browser
+A visual LoRA picker (funnel icon in the prompt field) integrated with
+[ComfyUI-Lora-Manager](https://github.com/willmiao/ComfyUI-Lora-Manager):
+
+* preview images (lazy-loaded), name search, tag filter, base-model filter,
+  favorites filter, adjustable thumbnail size
+* trigger words fetched from CivitAI metadata, insertable together with the
+  LoRA tag (per phrase group or all)
+* **multi-select**: pick several LoRAs and insert them as a random `{a|b}` or
+  sequential `[[a|b]]` wildcard group in one click, with per-LoRA trigger words
+* non-modal window (Krita stays interactive), disk-cached LoRA list for
+  instant reopening
+* falls back to a plain file list if Lora Manager is not installed
+
+### Faster startup
+* **Model list disk cache**: the 700+ model discovery calls at startup are
+  cached per server; use the Refresh button to update after installing models.
+
+### History & export
+* **Split prompt actions**: "Apply Prompt to Field" and "Copy Prompt to
+  Clipboard" are separate context menu entries (upstream does both at once),
+  each available in raw and evaluated form.
+* **Save to Eagle**: send generated images straight to the
+  [Eagle](https://eagle.cool) library via its local API — with the prompt as
+  title, full generation metadata as annotation, and style/LoRA names as tags.
+
+### Custom workflows
+Ready-made Krita-adapted workflows in [`custom_workflows/`](custom_workflows/)
+for the [Krea 2 Identity Edit](https://huggingface.co/conradlocke/krea2-identity-edit)
+model (requires the [comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit)
+node pack):
+
+* **Krea2 Identity Edit** — single reference, the canvas is the edit source
+* **Krea2 Identity Edit (Character + Scene)** — canvas is the scene, a
+  selectable Krita layer provides the person reference
+* both expose prompt, grounding_px and two stackable LoRA slots (dropdown with
+  all server LoRAs) as Krita parameters
+
+Copy them to `%APPDATA%\krita\ai_diffusion\workflows\` to use.
+
+### Fixes
+* Refresh Models button now actually updates the "missing models" display
+  (upstream bug: stale warning until full reconnect)
+* no crash when running custom workflow graphs without a style node
+
+## Installation
+
+Same as upstream — see the [Plugin Installation Guide](https://docs.interstice.cloud/installation).
+To use this fork instead of the official release, clone this repository and
+link/copy the `ai_diffusion` folder into Krita's `pykrita` directory
+(the bundled `websockets` library must be added from an official release
+package, it is not part of the repository).
+
+Some features require additional software:
+* LoRA Browser metadata: [ComfyUI-Lora-Manager](https://github.com/willmiao/ComfyUI-Lora-Manager)
+* Save to Eagle: [Eagle](https://eagle.cool) running locally
+* Krea2 workflows: [comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit) nodes
+
+---
+
+# Original plugin documentation
+
+✨[Features](#features) | ⚡ [Download](https://github.com/Acly/krita-ai-diffusion/releases/latest) | 🛠️[Installation](https://docs.interstice.cloud/installation) | 🎞️ [Video](https://youtu.be/Ly6USRwTHe0) | 🖼️[Gallery](#gallery) | 📖[User Guide](https://docs.interstice.cloud) | 💬[Discussion](https://github.com/Acly/krita-ai-diffusion/discussions) | 🗣️[Discord](https://discord.gg/pWyzHfHHhU)
 
 This is a plugin to use generative AI in image painting and editing workflows
 from within Krita. Visit
