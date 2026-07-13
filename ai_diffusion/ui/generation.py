@@ -819,8 +819,17 @@ class GenerationWidget(QWidget):
         self.queue_button = QueueButton(parent=self)
         self.queue_button.setFixedHeight(self.generate_button.height() - 2)
 
+        self.loop_button = QToolButton(self)
+        self.loop_button.setIcon(theme.icon("record"))
+        self.loop_button.setCheckable(True)
+        self.loop_button.setFixedHeight(self.generate_button.height() - 2)
+        self.loop_button.setToolTip(
+            _("Generate continuously until stopped - click again to stop")
+        )
+
         actions_layout = QHBoxLayout()
         actions_layout.addLayout(generate_layout)
+        actions_layout.addWidget(self.loop_button)
         actions_layout.addWidget(self.queue_button)
         layout.addLayout(actions_layout)
 
@@ -865,6 +874,7 @@ class GenerationWidget(QWidget):
                 self.region_prompt.activated.connect(model.generate),
                 self.generate_button.clicked.connect(model.generate),
                 self.generate_button.ctrl_clicked.connect(model.generate_replace),
+                bind_toggle(model, "loop_generate", self.loop_button),
             ]
             self.region_prompt.regions = model.active_regions
             self.custom_inpaint.model = model

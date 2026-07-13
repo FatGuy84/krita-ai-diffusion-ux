@@ -136,6 +136,7 @@ class DocumentModel(QObject, ObservableProperties):
     region_only = Property(False, persist=True)
     edit_mode = Property(False, persist=True)
     batch_count = Property(1, persist=True)
+    loop_generate = Property(False, setter="set_loop_generate")
     seed = Property(0, persist=True)
     fixed_seed = Property(False, persist=True)
     resolution_multiplier = Property(1.0, persist=True)
@@ -152,6 +153,7 @@ class DocumentModel(QObject, ObservableProperties):
     region_only_changed = pyqtSignal(bool)
     edit_mode_changed = pyqtSignal(bool)
     batch_count_changed = pyqtSignal(int)
+    loop_generate_changed = pyqtSignal(bool)
     seed_changed = pyqtSignal(int)
     fixed_seed_changed = pyqtSignal(bool)
     resolution_multiplier_changed = pyqtSignal(float)
@@ -180,6 +182,7 @@ class DocumentModel(QObject, ObservableProperties):
         self._style_connection: QMetaObject.Connection | None = None
 
         self.jobs.selection_changed.connect(self.update_preview)
+        self.jobs.job_finished.connect(self._continue_loop_generate)
         connection.state_changed.connect(self._init_on_connect)
         connection.error_changed.connect(self._forward_error)
         self.custom.validation_error_changed.connect(self._forward_validation_error)
@@ -211,17 +214,33 @@ class DocumentModel(QObject, ObservableProperties):
     def generate_replace(self):
         self._generate(QueueMode.replace)
 
+    def set_loop_generate(self, value: bool):
+        was_active = self._loop_generate
+        self._loop_generate = value
+        self.loop_generate_changed.emit(value)
+        if value and not was_active:
+            self._generate(self.queue_mode)
+
+    def _continue_loop_generate(self, job: Job):
+        if not self._loop_generate or job.kind is not JobKind.diffusion:
+            return
+        pending = self.jobs.count(JobState.queued) + self.jobs.count(JobState.executing)
+        if pending == 0:
+            self._generate(self.queue_mode)
+
     def _generate(self, queue_mode: QueueMode):
         """Enqueue image generation for the current setup."""
         ok, msg = self._doc.check_color_mode()
         if not ok and msg:
             self.report_error(msg)
+            self.loop_generate = False
             return
 
         try:
             input, job_params, cond_orig, prompt_loras_0 = self._prepare_workflow()
         except Exception as e:
             self.report_error(util.log_error(e))
+            self.loop_generate = False
             return
         self.clear_error()
         jobs = self.enqueue_jobs(
