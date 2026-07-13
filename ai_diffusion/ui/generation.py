@@ -100,6 +100,7 @@ class HistoryWidget(QListWidget):
         self._connections = []
         self._search_text = ""
         self._favorites_only = False
+        self._applied_only = False
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setResizeMode(QListView.Adjust)
@@ -343,7 +344,7 @@ class HistoryWidget(QListWidget):
         if item := self._find(id):
             job = ensure(self._model.jobs.find(id.job))
             item.setIcon(self._image_thumbnail(job, id.image))
-        if self._favorites_only:
+        if self._favorites_only or self._applied_only:
             self._apply_filter()
 
     def select_item(self):
@@ -375,12 +376,18 @@ class HistoryWidget(QListWidget):
         self._favorites_only = value
         self._apply_filter()
 
+    def set_applied_only(self, value: bool):
+        self._applied_only = value
+        self._apply_filter()
+
     def _item_matches_filter(self, item: QListWidgetItem) -> bool:
         job_id, index = self.item_info(item)
         job = self._model.jobs.find(job_id)
         if job is None:
             return False
         if self._favorites_only and not job.is_favorite(index or 0):
+            return False
+        if self._applied_only and not job.result_was_used(index or 0):
             return False
         if self._search_text:
             haystack = " ".join(
@@ -913,15 +920,22 @@ class GenerationWidget(QWidget):
         self.history_favorites_only.setCheckable(True)
         self.history_favorites_only.setToolTip(_("Show only favorite images (F to toggle)"))
 
+        self.history_applied_only = QToolButton(self)
+        self.history_applied_only.setIcon(theme.icon("apply"))
+        self.history_applied_only.setCheckable(True)
+        self.history_applied_only.setToolTip(_("Show only images that were applied to the canvas"))
+
         history_filter_layout = QHBoxLayout()
         history_filter_layout.addWidget(self.history_search, 1)
         history_filter_layout.addWidget(self.history_favorites_only)
+        history_filter_layout.addWidget(self.history_applied_only)
         layout.addLayout(history_filter_layout)
 
         self.history = HistoryWidget(self)
         self.history.item_activated.connect(self.apply_result)
         self.history_search.textChanged.connect(self.history.set_search_filter)
         self.history_favorites_only.toggled.connect(self.history.set_favorites_only)
+        self.history_applied_only.toggled.connect(self.history.set_applied_only)
         layout.addWidget(self.history)
 
         self.update_generate_options()
