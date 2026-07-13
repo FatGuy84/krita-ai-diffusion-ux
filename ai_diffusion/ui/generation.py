@@ -29,6 +29,7 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
     QHBoxLayout,
+    QLineEdit,
     QListView,
     QListWidget,
     QListWidgetItem,
@@ -97,6 +98,8 @@ class HistoryWidget(QListWidget):
         super().__init__(parent)
         self._model = root.active_model
         self._connections = []
+        self._search_text = ""
+        self._applied_only = False
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setResizeMode(QListView.Adjust)
@@ -186,6 +189,7 @@ class HistoryWidget(QListWidget):
 
         if scroll_to_bottom:
             self.scrollToBottom()
+        self._apply_filter()
 
     def _add_item(self, job: Job, item: QListWidgetItem, index=0):
         item.setData(Qt.ItemDataRole.UserRole, job.id)
@@ -338,6 +342,8 @@ class HistoryWidget(QListWidget):
         if item := self._find(id):
             job = ensure(self._model.jobs.find(id.job))
             item.setIcon(self._image_thumbnail(job, id.image))
+        if self._applied_only:
+            self._apply_filter()
 
     def select_item(self):
         self._model.jobs.selection = [self._item_data(i) for i in self.selectedItems()]
@@ -358,6 +364,48 @@ class HistoryWidget(QListWidget):
         for job in filter(self.is_finished, self._model.jobs):
             self.add(job)
         self.scrollToBottom()
+        self._apply_filter()
+
+    def set_search_filter(self, text: str):
+        self._search_text = text.strip().lower()
+        self._apply_filter()
+
+    def set_applied_only(self, value: bool):
+        self._applied_only = value
+        self._apply_filter()
+
+    def _item_matches_filter(self, item: QListWidgetItem) -> bool:
+        job_id, index = self.item_info(item)
+        job = self._model.jobs.find(job_id)
+        if job is None:
+            return False
+        if self._applied_only and not job.result_was_used(index or 0):
+            return False
+        if self._search_text:
+            haystack = " ".join(
+                str(job.params.metadata.get(k, ""))
+                for k in ("prompt", "prompt_eval", "negative_prompt", "negative_prompt_eval")
+            ).lower()
+            if self._search_text not in haystack and self._search_text not in job.params.name.lower():
+                return False
+        return True
+
+    def _apply_filter(self):
+        job_has_visible: dict[str, bool] = {}
+        for i in range(self.count()):
+            item = ensure(self.item(i))
+            if item.flags() == Qt.ItemFlag.NoItemFlags:
+                continue  # header item, handled below
+            job_id, __ = self.item_info(item)
+            visible = self._item_matches_filter(item)
+            item.setHidden(not visible)
+            if visible:
+                job_has_visible[job_id] = True
+        for i in range(self.count()):
+            item = ensure(self.item(i))
+            if item.flags() == Qt.ItemFlag.NoItemFlags:
+                job_id = item.data(Qt.ItemDataRole.UserRole)
+                item.setHidden(not job_has_visible.get(job_id, False))
 
     def item_info(self, item: QListWidgetItem) -> tuple[str, int]:  # job id, image index
         return item.data(Qt.ItemDataRole.UserRole), item.data(Qt.ItemDataRole.UserRole + 1)
@@ -839,8 +887,24 @@ class GenerationWidget(QWidget):
         self.error_box = ErrorBox(self)
         layout.addWidget(self.error_box)
 
+        self.history_search = QLineEdit(self)
+        self.history_search.setPlaceholderText(_("Search prompts…"))
+        self.history_search.setClearButtonEnabled(True)
+
+        self.history_applied_only = QToolButton(self)
+        self.history_applied_only.setIcon(QIcon(str(theme.icon_path / "star.png")))
+        self.history_applied_only.setCheckable(True)
+        self.history_applied_only.setToolTip(_("Show only images that were applied to the canvas"))
+
+        history_filter_layout = QHBoxLayout()
+        history_filter_layout.addWidget(self.history_search, 1)
+        history_filter_layout.addWidget(self.history_applied_only)
+        layout.addLayout(history_filter_layout)
+
         self.history = HistoryWidget(self)
         self.history.item_activated.connect(self.apply_result)
+        self.history_search.textChanged.connect(self.history.set_search_filter)
+        self.history_applied_only.toggled.connect(self.history.set_applied_only)
         layout.addWidget(self.history)
 
         self.update_generate_options()
