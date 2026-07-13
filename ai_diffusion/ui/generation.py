@@ -99,7 +99,7 @@ class HistoryWidget(QListWidget):
         self._model = root.active_model
         self._connections = []
         self._search_text = ""
-        self._applied_only = False
+        self._favorites_only = False
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setResizeMode(QListView.Adjust)
@@ -149,6 +149,7 @@ class HistoryWidget(QListWidget):
             jobs.job_discarded.connect(self.remove),
             jobs.result_used.connect(self.update_image_thumbnail),
             jobs.result_discarded.connect(self.remove_image),
+            jobs.favorite_changed.connect(self.update_image_thumbnail),
         ]
         self.rebuild()
         self.update_selection()
@@ -342,7 +343,7 @@ class HistoryWidget(QListWidget):
         if item := self._find(id):
             job = ensure(self._model.jobs.find(id.job))
             item.setIcon(self._image_thumbnail(job, id.image))
-        if self._applied_only:
+        if self._favorites_only:
             self._apply_filter()
 
     def select_item(self):
@@ -370,8 +371,8 @@ class HistoryWidget(QListWidget):
         self._search_text = text.strip().lower()
         self._apply_filter()
 
-    def set_applied_only(self, value: bool):
-        self._applied_only = value
+    def set_favorites_only(self, value: bool):
+        self._favorites_only = value
         self._apply_filter()
 
     def _item_matches_filter(self, item: QListWidgetItem) -> bool:
@@ -379,7 +380,7 @@ class HistoryWidget(QListWidget):
         job = self._model.jobs.find(job_id)
         if job is None:
             return False
-        if self._applied_only and not job.result_was_used(index or 0):
+        if self._favorites_only and not job.is_favorite(index or 0):
             return False
         if self._search_text:
             haystack = " ".join(
@@ -452,6 +453,9 @@ class HistoryWidget(QListWidget):
             elif e.key() == Qt.Key.Key_Space:
                 self._toggle_selection()
                 e.accept()
+            elif e.key() == Qt.Key.Key_F:
+                self._toggle_favorite()
+                e.accept()
         return super().event(e)
 
     def _find(self, id: JobQueue.Item):
@@ -470,8 +474,10 @@ class HistoryWidget(QListWidget):
         min_height = min(4 * self._apply_button.height(), 2 * self._thumb_size)
         if thumb.extent.height < min_height:
             thumb = Image.crop(thumb, Bounds(0, 0, thumb.extent.width, min_height))
-        if job.result_was_used(index):  # add tiny star icon to mark used results
+        if job.result_was_used(index):  # add tiny star icon top-right to mark used results
             thumb.draw_image(self._applied_icon, offset=(thumb.extent.width - 28, 4))
+        if job.is_favorite(index):  # add tiny star icon top-left to mark favorites
+            thumb.draw_image(self._applied_icon, offset=(4, 4))
         return thumb.to_icon()
 
     def _show_context_menu(self, pos: QPoint):
@@ -489,6 +495,11 @@ class HistoryWidget(QListWidget):
                 style_action.setEnabled(False)
             menu.addAction(_("Copy Seed"), self._copy_seed)
             menu.addAction(_("Info to Clipboard"), self._info_to_clipboard)
+            menu.addSeparator()
+            _, index = self.item_info(item)
+            is_fav = job is not None and job.is_favorite(index or 0)
+            fav_label = _("Remove from Favorites") if is_fav else _("Mark as Favorite")
+            menu.addAction(fav_label + "\tF", self._toggle_favorite)
             menu.addSeparator()
             menu.addAction(_("Save to Eagle"), self._save_to_eagle)
             save_action = ensure(menu.addAction(_("Save Image"), self._save_image))
@@ -569,6 +580,12 @@ class HistoryWidget(QListWidget):
         for item in items:
             job_id, image_index = self.item_info(item)
             self._model.send_result_to_eagle(job_id, image_index)
+
+    def _toggle_favorite(self):
+        items = self.selectedItems()
+        for item in items:
+            job_id, image_index = self.item_info(item)
+            self._model.jobs.toggle_favorite(job_id, image_index or 0)
 
     def _discard_image(self, confirm=True):
         confirm = confirm and settings.confirm_discard_image
@@ -891,20 +908,20 @@ class GenerationWidget(QWidget):
         self.history_search.setPlaceholderText(_("Search prompts…"))
         self.history_search.setClearButtonEnabled(True)
 
-        self.history_applied_only = QToolButton(self)
-        self.history_applied_only.setIcon(QIcon(str(theme.icon_path / "star.png")))
-        self.history_applied_only.setCheckable(True)
-        self.history_applied_only.setToolTip(_("Show only images that were applied to the canvas"))
+        self.history_favorites_only = QToolButton(self)
+        self.history_favorites_only.setIcon(QIcon(str(theme.icon_path / "star.png")))
+        self.history_favorites_only.setCheckable(True)
+        self.history_favorites_only.setToolTip(_("Show only favorite images (F to toggle)"))
 
         history_filter_layout = QHBoxLayout()
         history_filter_layout.addWidget(self.history_search, 1)
-        history_filter_layout.addWidget(self.history_applied_only)
+        history_filter_layout.addWidget(self.history_favorites_only)
         layout.addLayout(history_filter_layout)
 
         self.history = HistoryWidget(self)
         self.history.item_activated.connect(self.apply_result)
         self.history_search.textChanged.connect(self.history.set_search_filter)
-        self.history_applied_only.toggled.connect(self.history.set_applied_only)
+        self.history_favorites_only.toggled.connect(self.history.set_favorites_only)
         layout.addWidget(self.history)
 
         self.update_generate_options()

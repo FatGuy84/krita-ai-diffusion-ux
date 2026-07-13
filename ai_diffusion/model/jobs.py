@@ -126,6 +126,7 @@ class Job:
     timestamp: datetime
     results: ImageCollection
     in_use: dict[int, bool]
+    favorites: dict[int, bool]
 
     def __init__(self, id: str | None, kind: JobKind, params: JobParams):
         self.id = id
@@ -134,9 +135,13 @@ class Job:
         self.timestamp = datetime.now(timezone.utc)
         self.results = ImageCollection()
         self.in_use = {}
+        self.favorites = {}
 
     def result_was_used(self, index: int):
         return self.in_use.get(index, False)
+
+    def is_favorite(self, index: int):
+        return self.favorites.get(index, False)
 
 
 class JobQueue(QObject):
@@ -152,6 +157,7 @@ class JobQueue(QObject):
     job_discarded = pyqtSignal(Job)
     result_used = pyqtSignal(Item)
     result_discarded = pyqtSignal(Item)
+    favorite_changed = pyqtSignal(Item)
 
     def __init__(self):
         super().__init__()
@@ -218,6 +224,11 @@ class JobQueue(QObject):
         job = ensure(self.find(job_id))
         job.in_use[index] = True
         self.result_used.emit(self.Item(job_id, index))
+
+    def toggle_favorite(self, job_id: str, index: int):
+        job = ensure(self.find(job_id))
+        job.favorites[index] = not job.is_favorite(index)
+        self.favorite_changed.emit(self.Item(job_id, index))
 
     def select(self, job_id: str, index: int):
         self.selection = [self.Item(job_id, index)]
