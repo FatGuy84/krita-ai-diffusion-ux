@@ -503,7 +503,7 @@ class HistoryWidget(QListWidget):
             menu.addAction(_("Copy Seed"), self._copy_seed)
             menu.addAction(_("Info to Clipboard"), self._info_to_clipboard)
             menu.addSeparator()
-            _, index = self.item_info(item)
+            __, index = self.item_info(item)
             is_fav = job is not None and job.is_favorite(index or 0)
             fav_label = _("Remove from Favorites") if is_fav else _("Mark as Favorite")
             menu.addAction(fav_label + "\tF", self._toggle_favorite)
