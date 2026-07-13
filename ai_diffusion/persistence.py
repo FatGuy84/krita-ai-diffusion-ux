@@ -105,12 +105,14 @@ class _HistoryResult:
     params: JobParams
     kind: JobKind = JobKind.diffusion
     in_use: dict[int, bool] = field(default_factory=dict)
+    favorites: dict[int, bool] = field(default_factory=dict)
 
     @staticmethod
     def from_dict(data: dict[str, Any]):
         data["params"] = JobParams.from_dict(data["params"])
         data["kind"] = JobKind[data.get("kind", "diffusion")]
         data["in_use"] = {int(k): v for k, v in data.get("in_use", {}).items()}
+        data["favorites"] = {int(k): v for k, v in data.get("favorites", {}).items()}
         return _HistoryResult(**data)
 
 
@@ -187,6 +189,7 @@ class ModelSync:
             if images_bytes := _find_annotation(model.document, f"result{item.slot}.webp"):
                 job = model.jobs.add_job(Job(item.id, item.kind, item.params))
                 job.in_use = item.in_use
+                job.favorites = item.favorites
                 results = ImageCollection.from_bytes(images_bytes, item.offsets)
                 model.jobs.set_results(job, results)
                 model.jobs.notify_finished(job)
@@ -205,6 +208,7 @@ class ModelSync:
         model.jobs.job_discarded.connect(self._remove_results)
         model.jobs.result_discarded.connect(self._remove_image)
         model.jobs.result_used.connect(self._save_later)
+        model.jobs.favorite_changed.connect(self._save_later)
         model.jobs.selection_changed.connect(self._save_later)
         self._track_regions(model.regions)
         self._track_regions(model.edit_regions)
@@ -252,7 +256,9 @@ class ModelSync:
 
         self._model.document.annotate(f"result{slot}.webp", image_data)
         self._history.append(
-            _HistoryResult(job.id or "", slot, image_offsets, job.params, job.kind, job.in_use)
+            _HistoryResult(
+                job.id or "", slot, image_offsets, job.params, job.kind, job.in_use, job.favorites
+            )
         )
         self._memory_used[slot] = image_data.size()
         self._prune()
