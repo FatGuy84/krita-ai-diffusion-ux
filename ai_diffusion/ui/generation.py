@@ -22,6 +22,7 @@ from PyQt5.QtGui import (
     QKeyEvent,
     QKeySequence,
     QMouseEvent,
+    QPainter,
     QPalette,
 )
 from PyQt5.QtWidgets import (
@@ -70,6 +71,16 @@ from .widget import (
 )
 
 
+def _tint_image(image: Image, color: QColor) -> Image:
+    """Recolor the opaque pixels of an icon-like image, keeping its alpha shape."""
+    qimg = image._qimage.copy()
+    painter = QPainter(qimg)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    painter.fillRect(qimg.rect(), color)
+    painter.end()
+    return Image(qimg)
+
+
 class HistoryWidget(QListWidget):
     _model: DocumentModel
     _connections: list[QMetaObject.Connection]
@@ -79,6 +90,7 @@ class HistoryWidget(QListWidget):
 
     _thumb_size = 96
     _applied_icon = Image.load(theme.icon_path / "star.png")
+    _favorite_icon = _tint_image(_applied_icon, QColor(230, 50, 50))
     _list_css = f"""
         QListWidget {{ background-color: transparent; }}
         QListWidget::item:selected {{ border: 1px solid {theme.grey}; }}
@@ -483,8 +495,8 @@ class HistoryWidget(QListWidget):
             thumb = Image.crop(thumb, Bounds(0, 0, thumb.extent.width, min_height))
         if job.result_was_used(index):  # add tiny star icon top-right to mark used results
             thumb.draw_image(self._applied_icon, offset=(thumb.extent.width - 28, 4))
-        if job.is_favorite(index):  # add tiny star icon top-left to mark favorites
-            thumb.draw_image(self._applied_icon, offset=(4, 4))
+        if job.is_favorite(index):  # add tiny red star icon top-left to mark favorites
+            thumb.draw_image(self._favorite_icon, offset=(4, 4))
         return thumb.to_icon()
 
     def _show_context_menu(self, pos: QPoint):
@@ -916,7 +928,7 @@ class GenerationWidget(QWidget):
         self.history_search.setClearButtonEnabled(True)
 
         self.history_favorites_only = QToolButton(self)
-        self.history_favorites_only.setIcon(QIcon(str(theme.icon_path / "star.png")))
+        self.history_favorites_only.setIcon(HistoryWidget._favorite_icon.to_icon())
         self.history_favorites_only.setCheckable(True)
         self.history_favorites_only.setToolTip(_("Show only favorite images (F to toggle)"))
 
@@ -1142,7 +1154,9 @@ class GenerationWidget(QWidget):
                 text = _("Refine")
         else:
             self.inpaint_mode_button.setVisible(True)
-            self.custom_inpaint.setVisible(self.model.inpaint.mode is InpaintMode.custom)
+            self.custom_inpaint.setVisible(
+                self.model.inpaint.mode is InpaintMode.custom and self.model.strength < 1.0
+            )
             mode = self.model.resolve_inpaint_mode()
             text = _("Generate")
             if is_edit:
