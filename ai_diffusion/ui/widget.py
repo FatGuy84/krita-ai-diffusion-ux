@@ -128,14 +128,14 @@ class QueuePopup(QMenu):
         batch_layout = QHBoxLayout()
         self._batch_slider = QSlider(Qt.Orientation.Horizontal, self)
         self._batch_slider.setMinimum(1)
-        self._batch_slider.setMaximum(100)
+        self._batch_slider.setMaximum(1000)
         self._batch_slider.setSingleStep(1)
-        self._batch_slider.setPageStep(5)
+        self._batch_slider.setPageStep(10)
         self._batch_slider.setVisible(supports_batch)
         self._batch_slider.setToolTip(_("Number of jobs to enqueue at once"))
         self._batch_spinbox = QSpinBox(self)
         self._batch_spinbox.setMinimum(1)
-        self._batch_spinbox.setMaximum(100)
+        self._batch_spinbox.setMaximum(1000)
         self._batch_spinbox.setFixedWidth(52)
         self._batch_spinbox.setVisible(supports_batch)
         self._batch_spinbox.setToolTip(_("Number of jobs to enqueue at once"))
@@ -274,7 +274,7 @@ class QueuePopup(QMenu):
         product = 1
         for inner in matches:
             product *= len(inner.split("|"))
-        product = min(product, 100)
+        product = min(product, 1000)
         self._model.batch_count = product
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
