@@ -90,7 +90,7 @@ class HistoryWidget(QListWidget):
 
     _thumb_size = 96
     _applied_icon = Image.load(theme.icon_path / "star.png")
-    _favorite_icon = _tint_image(_applied_icon, QColor(255, 200, 0))
+    _favorite_icon = _applied_icon
     _list_css = f"""
         QListWidget {{ background-color: transparent; }}
         QListWidget::item:selected {{ border: 1px solid {theme.grey}; }}
