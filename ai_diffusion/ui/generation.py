@@ -90,7 +90,7 @@ class HistoryWidget(QListWidget):
 
     _thumb_size = 96
     _applied_icon = Image.load(theme.icon_path / "star.png")
-    _favorite_icon = _tint_image(_applied_icon, QColor(230, 50, 50))
+    _favorite_icon = _tint_image(_applied_icon, QColor(255, 200, 0))
     _list_css = f"""
         QListWidget {{ background-color: transparent; }}
         QListWidget::item:selected {{ border: 1px solid {theme.grey}; }}
@@ -904,7 +904,7 @@ class GenerationWidget(QWidget):
         self.queue_button.setFixedHeight(self.generate_button.height() - 2)
 
         self.loop_button = QToolButton(self)
-        self.loop_button.setIcon(theme.icon("record"))
+        self.loop_button.setIcon(theme.icon("reset"))
         self.loop_button.setCheckable(True)
         self.loop_button.setFixedHeight(self.generate_button.height() - 2)
         self.loop_button.setToolTip(
@@ -933,7 +933,7 @@ class GenerationWidget(QWidget):
         self.history_favorites_only.setToolTip(_("Show only favorite images (F to toggle)"))
 
         self.history_applied_only = QToolButton(self)
-        self.history_applied_only.setIcon(theme.icon("apply"))
+        self.history_applied_only.setIcon(HistoryWidget._applied_icon.to_icon())
         self.history_applied_only.setCheckable(True)
         self.history_applied_only.setToolTip(_("Show only images that were applied to the canvas"))
 
