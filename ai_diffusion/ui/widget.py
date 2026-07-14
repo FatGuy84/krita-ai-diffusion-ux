@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from itertools import chain
 from typing import Any, ClassVar, cast
 
 from krita import Krita
@@ -47,7 +46,7 @@ from PyQt5.QtWidgets import (
     QWidgetAction,
 )
 
-from ..backend.client import filter_supported_styles, resolve_arch
+from ..backend.client import resolve_arch
 from ..backend.workflow import apply_strength, snap_to_percent
 from ..localization import translate as _
 from ..model.connection import ConnectionState
@@ -65,7 +64,7 @@ from ..model.model import (
 from ..model.properties import Bind, Binding, bind, bind_combo
 from ..model.root import root
 from ..settings import Settings, settings
-from ..style import Style, Styles, sort_recent_styles
+from ..style import Style, Styles
 from ..text import (
     char16_index_to_str_index,
     char16_len,
@@ -356,17 +355,17 @@ class StyleSelectWidget(QWidget):
 
     def __init__(self, parent: QWidget | None, show_quality=False):
         super().__init__(parent)
-        self._styles: list[Style] = []
         self._value = Styles.list().default
+        self._picker: "StylePickerDialog | None" = None
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(layout)
 
-        self._combo = QComboBox(self)
-        self.update_styles()
-        self._combo.currentIndexChanged.connect(self.change_style)
-        layout.addWidget(self._combo, 3)
+        self._button = QPushButton(self)
+        self._button.clicked.connect(self.open_picker)
+        self._update_button()
+        layout.addWidget(self._button, 3)
 
         if show_quality:
             self._quality_combo = QComboBox(self)
@@ -381,51 +380,37 @@ class StyleSelectWidget(QWidget):
         settings_btn.clicked.connect(self.show_settings)
         layout.addWidget(settings_btn)
 
-        Styles.list().changed.connect(self.update_styles)
-        Styles.list().name_changed.connect(self.update_styles)
-        root.connection.state_changed.connect(self.update_styles)
-        settings.changed.connect(self._on_settings_changed)
+        Styles.list().name_changed.connect(self._update_button)
+        root.connection.state_changed.connect(self._update_button)
 
-    def update_styles(self):
-        if root.connection.state is not ConnectionState.connected:
-            return
+    def _update_button(self):
         client = root.connection.client_if_connected
-        filtered = filter_supported_styles(Styles.list().filtered(), client)
-        recent, remaining = sort_recent_styles(
-            filtered, settings.recent_styles, settings.recent_styles_count
-        )
-        if self._value not in chain(recent, remaining):
-            recent.insert(0, self._value)
-        self._styles = recent + remaining
-        with SignalBlocker(self._combo):
-            self._combo.clear()
-            for style in recent:
-                icon = theme.checkpoint_icon(resolve_arch(style, client))
-                self._combo.addItem(icon, f"{style.name} ★", style.filename)
-            if recent and remaining:
-                self._combo.insertSeparator(len(recent))
-            for style in remaining:
-                icon = theme.checkpoint_icon(resolve_arch(style, client))
-                self._combo.addItem(icon, style.name, style.filename)
-            self._combo.setCurrentText(self._value.name)
+        icon = theme.checkpoint_icon(resolve_arch(self._value, client))
+        self._button.setIcon(icon)
+        self._button.setText(self._value.name)
 
-    def change_style(self):
-        filename = self._combo.currentData()
-        if filename is None:
-            return  # separator item selected
-        style = next((s for s in self._styles if s.filename == filename), None)
-        if style is None or style == self._value:
-            return
-        self._value = style
-        self.value_changed.emit(style)
+    def open_picker(self):
+        from .style_picker import StylePickerDialog
+
+        if self._picker is None:
+            self._picker = StylePickerDialog(self._value, parent=self)
+            self._picker.style_selected.connect(self._on_style_picked)
+        else:
+            self._picker._current = self._value
+            self._picker._reload()
+        self._picker.show()
+        self._picker.raise_()
+        self._picker.activateWindow()
+
+    def _on_style_picked(self, style: Style):
+        if style != self._value:
+            self._value = style
+            self._update_button()
+            self.value_changed.emit(style)
 
     def change_quality(self):
         quality = SamplingQuality(self._quality_combo.currentData())
         self.quality_changed.emit(quality)
-
-    def _on_settings_changed(self, name: str, value: object):
-        if "recent_styles" in name:
-            self.update_styles()
 
     def show_settings(self):
         from .settings import SettingsDialog
@@ -440,11 +425,7 @@ class StyleSelectWidget(QWidget):
     def value(self, style: Style):
         if style != self._value:
             self._value = style
-            if style not in self._styles:
-                self.update_styles()
-            else:
-                idx = self._combo.findData(style.filename)
-                self._combo.setCurrentIndex(idx)
+            self._update_button()
 
 
 class PromptHighlighter(QSyntaxHighlighter):
