@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PyQt5.QtCore import QEvent, Qt, pyqtSignal
-from PyQt5.QtGui import QKeyEvent
+from PyQt5.QtGui import QIcon, QKeyEvent, QPainter, QPixmap
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -43,6 +43,26 @@ def _family_label(style: Style, arch: Arch) -> str:
     return arch.name
 
 
+_star_pixmap = QPixmap(str(theme.icon_path / "star.png"))
+
+
+def _favorite_icon(base: QIcon) -> QIcon:
+    """Overlay a white star badge on the bottom-right corner of a checkpoint icon."""
+    size = 16
+    pixmap = base.pixmap(size, size)
+    if pixmap.isNull():
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+    badge_size = max(7, size // 2)
+    star = _star_pixmap.scaled(
+        badge_size, badge_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+    )
+    painter = QPainter(pixmap)
+    painter.drawPixmap(pixmap.width() - badge_size, pixmap.height() - badge_size, star)
+    painter.end()
+    return QIcon(pixmap)
+
+
 class StylePickerDialog(QDialog):
     style_selected = pyqtSignal(Style)
 
@@ -69,7 +89,8 @@ class StylePickerDialog(QDialog):
         self._arch_combo.addItem(_("Any"), _ARCH_ANY)
         self._arch_combo.currentIndexChanged.connect(self._apply_filter)
 
-        self._favorites_check = QCheckBox(_("★ Favorites"), self)
+        self._favorites_check = QCheckBox(_("Favorites"), self)
+        self._favorites_check.setIcon(QIcon(_star_pixmap))
         self._favorites_check.toggled.connect(self._set_favorites_only)
 
         row1 = QHBoxLayout()
@@ -189,8 +210,9 @@ class StylePickerDialog(QDialog):
                 self._list.addItem(header)
 
             icon = theme.checkpoint_icon(arch, client=client)
-            text = f"★ {style.name}" if is_fav else style.name
-            item = QListWidgetItem(icon, text)
+            if is_fav:
+                icon = _favorite_icon(icon)
+            item = QListWidgetItem(icon, style.name)
             item.setData(Qt.ItemDataRole.UserRole, style.filename)
             if style == self._current:
                 item.setSelected(True)
