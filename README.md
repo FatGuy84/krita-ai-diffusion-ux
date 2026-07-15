@@ -27,9 +27,12 @@ upstream releases (currently based on v1.52.1).
 * **LoRAs inside wildcards**: `<lora:...>` tags inside `[[...]]` groups are
   correctly switched per batch item — each image is generated with its own LoRA
   set, not just the first one.
-* **Batch count up to 100** (upstream: 10) with an editable spinbox, plus a
+* **Batch count up to 1000** (upstream: 10) with an editable spinbox, plus a
   one-click button that sets the batch count to the number of sequential
   wildcard combinations in the prompt.
+* **Loop Generate**: toggle button next to Generate keeps enqueuing new
+  batches automatically as soon as the queue drains, until toggled off —
+  useful for unattended overnight generation. Auto-disables on errors.
 
 ### LoRA Browser
 A visual LoRA picker (funnel icon in the prompt field) integrated with
@@ -45,6 +48,20 @@ A visual LoRA picker (funnel icon in the prompt field) integrated with
   instant reopening
 * falls back to a plain file list if Lora Manager is not installed
 
+### Style Picker
+Style/checkpoint selection was an unmanageable dropdown once you have
+hundreds of presets. Replaced with a searchable, non-modal picker dialog
+(same design language as the LoRA browser):
+
+* live search by name/checkpoint, filter by base-model family
+* **base model family detection**: Illustrious and Pony checkpoints are
+  architecturally identical to SDXL, so they can't be told apart from the
+  model weights — a new per-style "Base Model Family" field defaults to a
+  filename-based guess (like the LoRA browser) but is manually overridable
+  from a dropdown, and drives the picker's filter
+* favorite styles (right-click or `F`), pinned in their own section above
+  the existing "Recently Used" list
+
 ### Faster startup
 * **Model list disk cache**: the 700+ model discovery calls at startup are
   cached per server; use the Refresh button to update after installing models.
@@ -53,6 +70,11 @@ A visual LoRA picker (funnel icon in the prompt field) integrated with
 * **Split prompt actions**: "Apply Prompt to Field" and "Copy Prompt to
   Clipboard" are separate context menu entries (upstream does both at once),
   each available in raw and evaluated form.
+* **Search & filter the generation history**: search box filters by prompt
+  text live; two toggles show only favorited or only canvas-applied images.
+* **Favorite images**: mark generated results as favorites (right-click or
+  `F` hotkey), persisted across restarts, shown as a star badge on the
+  thumbnail.
 * **Save to Eagle**: send generated images straight to the
   [Eagle](https://eagle.cool) library via its local API — with the prompt as
   title, full generation metadata as annotation, and style/LoRA names as tags.
