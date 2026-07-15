@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import QEvent, Qt, pyqtSignal
+from PyQt5.QtGui import QKeyEvent
 from PyQt5.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QHBoxLayout,
@@ -9,12 +11,14 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from ..backend.client import filter_supported_styles, resolve_arch
+from ..backend.resources import Arch
 from ..localization import translate as _
 from ..model.connection import ConnectionState
 from ..model.root import root
@@ -23,6 +27,20 @@ from ..style import Style, Styles, sort_recent_styles
 from . import theme
 
 _ARCH_ANY = "__any__"
+
+# Checkpoint families that share an Arch (e.g. Pony/Illustrious are both
+# technically SDXL-derived) but that users think of as distinct categories.
+# Detected heuristically from style name / checkpoint filename, same approach
+# as the LoRA browser's base_model mapping.
+_FAMILY_HINTS = ["pony", "illustrious"]
+
+
+def _family_label(style: Style, arch: Arch) -> str:
+    haystack = (style.name + " " + " ".join(style.checkpoints)).lower()
+    for hint in _FAMILY_HINTS:
+        if hint in haystack:
+            return hint.capitalize()
+    return arch.name
 
 
 class StylePickerDialog(QDialog):
@@ -33,6 +51,7 @@ class StylePickerDialog(QDialog):
         self._current = current
         self._styles: list[Style] = []
         self._recent: set[str] = set()
+        self._favorites_only = False
 
         self.setWindowTitle(_("Select Style"))
         self.setMinimumSize(420, 480)
@@ -50,15 +69,25 @@ class StylePickerDialog(QDialog):
         self._arch_combo.addItem(_("Any"), _ARCH_ANY)
         self._arch_combo.currentIndexChanged.connect(self._apply_filter)
 
+        self._favorites_check = QCheckBox(_("★ Favorites"), self)
+        self._favorites_check.toggled.connect(self._set_favorites_only)
+
         row1 = QHBoxLayout()
         row1.addWidget(self._search, 1)
 
         row2 = QHBoxLayout()
         row2.addWidget(arch_label)
         row2.addWidget(self._arch_combo, 1)
+        row2.addWidget(self._favorites_check)
 
         self._list = QListWidget(self)
         self._list.itemActivated.connect(self._activate)
+        self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._show_context_menu)
+        self._list.installEventFilter(self)
+
+        hint = QLabel(_("Double-click to select. Right-click or F to toggle favorite."), self)
+        hint.setStyleSheet(f"color: {theme.grey}; font-style: italic;")
 
         close_btn = QPushButton(_("Close"), self)
         close_btn.clicked.connect(self.close)
@@ -70,16 +99,38 @@ class StylePickerDialog(QDialog):
         layout.addLayout(row1)
         layout.addLayout(row2)
         layout.addWidget(self._list, 1)
+        layout.addWidget(hint)
         layout.addLayout(bottom)
         self.setLayout(layout)
 
         Styles.list().changed.connect(self._reload)
+        settings.changed.connect(self._on_settings_changed)
         self._reload()
 
     def _client(self):
         if root.connection.state is ConnectionState.connected:
             return root.connection.client_if_connected
         return None
+
+    def _on_settings_changed(self, name: str, value: object):
+        if name == "favorite_styles":
+            self._apply_filter()
+
+    def _set_favorites_only(self, value: bool):
+        self._favorites_only = value
+        self._apply_filter()
+
+    def _is_favorite(self, style: Style) -> bool:
+        return style.filename in settings.favorite_styles
+
+    def _toggle_favorite(self, style: Style):
+        favorites = list(settings.favorite_styles)
+        if style.filename in favorites:
+            favorites.remove(style.filename)
+        else:
+            favorites.append(style.filename)
+        settings.favorite_styles = favorites
+        settings.save()
 
     def _reload(self):
         client = self._client()
@@ -92,13 +143,13 @@ class StylePickerDialog(QDialog):
         self._recent = {s.filename for s in recent}
         self._styles = recent + remaining
 
-        archs = sorted({resolve_arch(s, client).name for s in self._styles}, key=str)
+        families = sorted({_family_label(s, resolve_arch(s, client)) for s in self._styles})
         current_arch = self._arch_combo.currentData()
         self._arch_combo.blockSignals(True)
         self._arch_combo.clear()
         self._arch_combo.addItem(_("Any"), _ARCH_ANY)
-        for arch in archs:
-            self._arch_combo.addItem(arch, arch)
+        for family in families:
+            self._arch_combo.addItem(family, family)
         idx = self._arch_combo.findData(current_arch)
         self._arch_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._arch_combo.blockSignals(False)
@@ -108,32 +159,38 @@ class StylePickerDialog(QDialog):
     def _apply_filter(self):
         client = self._client()
         search = self._search.text().strip().lower()
-        arch = self._arch_combo.currentData()
-        arch = "" if arch in (None, _ARCH_ANY) else arch
+        family_filter = self._arch_combo.currentData()
+        family_filter = "" if family_filter in (None, _ARCH_ANY) else family_filter
 
         self._list.clear()
-        shown_recent = False
+        section = None  # None | "favorites" | "recent" | "all"
         for style in self._styles:
-            if arch and resolve_arch(style, client).name != arch:
+            arch = resolve_arch(style, client)
+            if family_filter and _family_label(style, arch) != family_filter:
+                continue
+            is_fav = self._is_favorite(style)
+            if self._favorites_only and not is_fav:
                 continue
             haystack = (style.name + " " + " ".join(style.checkpoints)).lower()
             if search and search not in haystack:
                 continue
 
             is_recent = style.filename in self._recent
-            if is_recent and not shown_recent:
-                header = QListWidgetItem(_("Recently Used"))
+            wanted_section = "favorites" if is_fav else ("recent" if is_recent else "all")
+            if wanted_section != section:
+                section = wanted_section
+                label = {
+                    "favorites": _("Favorites"),
+                    "recent": _("Recently Used"),
+                    "all": _("All Styles"),
+                }[section]
+                header = QListWidgetItem(label)
                 header.setFlags(Qt.ItemFlag.NoItemFlags)
                 self._list.addItem(header)
-                shown_recent = True
-            elif not is_recent and shown_recent:
-                header = QListWidgetItem(_("All Styles"))
-                header.setFlags(Qt.ItemFlag.NoItemFlags)
-                self._list.addItem(header)
-                shown_recent = False
 
-            icon = theme.checkpoint_icon(resolve_arch(style, client), client=client)
-            item = QListWidgetItem(icon, style.name)
+            icon = theme.checkpoint_icon(arch, client=client)
+            text = f"★ {style.name}" if is_fav else style.name
+            item = QListWidgetItem(icon, text)
             item.setData(Qt.ItemDataRole.UserRole, style.filename)
             if style == self._current:
                 item.setSelected(True)
@@ -147,3 +204,36 @@ class StylePickerDialog(QDialog):
             self._current = style
             self.style_selected.emit(style)
             self.close()
+
+    def _selected_style(self) -> Style | None:
+        items = self._list.selectedItems()
+        if not items:
+            return None
+        filename = items[0].data(Qt.ItemDataRole.UserRole)
+        return Styles.list().find(filename) if filename else None
+
+    def _toggle_selected_favorite(self):
+        if style := self._selected_style():
+            self._toggle_favorite(style)
+
+    def _show_context_menu(self, pos):
+        item = self._list.itemAt(pos)
+        if item is None or item.data(Qt.ItemDataRole.UserRole) is None:
+            return
+        filename = item.data(Qt.ItemDataRole.UserRole)
+        style = Styles.list().find(filename)
+        if style is None:
+            return
+        menu = QMenu(self)
+        label = _("Remove from Favorites") if self._is_favorite(style) else _("Add to Favorites")
+        menu.addAction(label + "\tF", lambda: self._toggle_favorite(style))
+        menu.exec(self._list.mapToGlobal(pos))
+
+    def eventFilter(self, obj, event):
+        if obj is self._list and event.type() == QEvent.Type.ShortcutOverride:
+            assert isinstance(event, QKeyEvent)
+            if event.key() == Qt.Key.Key_F:
+                self._toggle_selected_favorite()
+                event.accept()
+                return True
+        return super().eventFilter(obj, event)

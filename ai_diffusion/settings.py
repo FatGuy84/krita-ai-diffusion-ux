@@ -385,6 +385,9 @@ class Settings(QObject):
         ],
     )
 
+    favorite_styles: list[str]
+    _favorite_styles = Setting("Favorite Styles", [])
+
     history_size: int
     _history_size = Setting(
         _("Active History Size"),
