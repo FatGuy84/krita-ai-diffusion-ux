@@ -30,7 +30,7 @@ from ..files import File, FileFilter, FileFormat, FileSource
 from ..localization import translate as _
 from ..model.root import root
 from ..settings import ServerMode, Setting, settings
-from ..style import SamplerPresets, Style, Styles, StyleSettings
+from ..style import SamplerPresets, Style, Styles, StyleSettings, detect_base_model_family
 from . import theme
 from .settings_widgets import (
     ComboBoxSetting,
@@ -685,6 +685,9 @@ class StylePresets(SettingsTab):
         self._arch_select: ComboBoxSetting = add(
             "architecture", ComboBoxSetting(StyleSettings.architecture, parent=self)
         )
+        self._family_select: ComboBoxSetting = add(
+            "base_model_family", ComboBoxSetting(StyleSettings.base_model_family, parent=self)
+        )
         self._vae = add("vae", ComboBoxSetting(StyleSettings.vae, parent=self))
 
         self._clip_skip = add("clip_skip", SpinBoxSetting(StyleSettings.clip_skip, self, 0, 12))
@@ -709,6 +712,7 @@ class StylePresets(SettingsTab):
 
         self._checkpoint_advanced_widgets = [
             self._arch_select,
+            self._family_select,
             self._vae,
             self._clip_skip,
             self._resolution_spin,
@@ -938,6 +942,9 @@ class StylePresets(SettingsTab):
             self._arch_select.set_items([(e.value, e.name) for e in valid_archs])
             if self.current_style.architecture in valid_archs:
                 self._arch_select.value = self.current_style.architecture
+        detected = detect_base_model_family(self.current_style.checkpoints, arch)
+        hint = f" ({_('detected')}: {detected})" if self.current_style.base_model_family == "Auto" else ""
+        self._family_select.set_text(hint)
         self._clip_skip_check.setEnabled(arch.supports_clip_skip)
         self._clip_skip.enabled = arch.supports_clip_skip and self.current_style.clip_skip > 0
         self._zsnr.enabled = arch.supports_attention_guidance

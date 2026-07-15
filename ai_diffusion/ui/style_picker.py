@@ -18,7 +18,6 @@ from PyQt5.QtWidgets import (
 )
 
 from ..backend.client import filter_supported_styles, resolve_arch
-from ..backend.resources import Arch
 from ..localization import translate as _
 from ..model.connection import ConnectionState
 from ..model.root import root
@@ -27,20 +26,6 @@ from ..style import Style, Styles, sort_recent_styles
 from . import theme
 
 _ARCH_ANY = "__any__"
-
-# Checkpoint families that share an Arch (e.g. Pony/Illustrious are both
-# technically SDXL-derived) but that users think of as distinct categories.
-# Detected heuristically from style name / checkpoint filename, same approach
-# as the LoRA browser's base_model mapping.
-_FAMILY_HINTS = ["pony", "illustrious"]
-
-
-def _family_label(style: Style, arch: Arch) -> str:
-    haystack = (style.name + " " + " ".join(style.checkpoints)).lower()
-    for hint in _FAMILY_HINTS:
-        if hint in haystack:
-            return hint.capitalize()
-    return arch.name
 
 
 def _tint_pixmap(pixmap: QPixmap, color) -> QPixmap:
@@ -175,7 +160,7 @@ class StylePickerDialog(QDialog):
         self._recent = {s.filename for s in recent}
         self._styles = recent + remaining
 
-        families = sorted({_family_label(s, resolve_arch(s, client)) for s in self._styles})
+        families = sorted({s.effective_family(resolve_arch(s, client)) for s in self._styles})
         current_arch = self._arch_combo.currentData()
         self._arch_combo.blockSignals(True)
         self._arch_combo.clear()
@@ -198,7 +183,7 @@ class StylePickerDialog(QDialog):
         section = None  # None | "favorites" | "recent" | "all"
         for style in self._styles:
             arch = resolve_arch(style, client)
-            if family_filter and _family_label(style, arch) != family_filter:
+            if family_filter and style.effective_family(arch) != family_filter:
                 continue
             is_fav = self._is_favorite(style)
             if self._favorites_only and not is_fav:
