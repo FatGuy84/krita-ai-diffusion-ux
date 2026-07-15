@@ -39,6 +39,7 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QSlider,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -383,6 +384,11 @@ class HistoryWidget(QListWidget):
     def set_search_filter(self, text: str):
         self._search_text = text.strip().lower()
         self._apply_filter()
+
+    def set_thumb_size(self, value: int):
+        self._thumb_size = value
+        self.setIconSize(theme.screen_scale(self, QSize(value, value)))
+        self.rebuild()
 
     def set_favorites_only(self, value: bool):
         self._favorites_only = value
@@ -943,11 +949,23 @@ class GenerationWidget(QWidget):
         history_filter_layout.addWidget(self.history_applied_only)
         layout.addLayout(history_filter_layout)
 
+        history_size_label = QLabel(_("Size:"), self)
+        self.history_size_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.history_size_slider.setMinimum(48)
+        self.history_size_slider.setMaximum(256)
+        self.history_size_slider.setValue(96)
+        self.history_size_slider.setToolTip(_("Preview image size"))
+        history_size_layout = QHBoxLayout()
+        history_size_layout.addWidget(history_size_label)
+        history_size_layout.addWidget(self.history_size_slider, 1)
+        layout.addLayout(history_size_layout)
+
         self.history = HistoryWidget(self)
         self.history.item_activated.connect(self.apply_result)
         self.history_search.textChanged.connect(self.history.set_search_filter)
         self.history_favorites_only.toggled.connect(self.history.set_favorites_only)
         self.history_applied_only.toggled.connect(self.history.set_applied_only)
+        self.history_size_slider.valueChanged.connect(self.history.set_thumb_size)
         layout.addWidget(self.history)
 
         self.update_generate_options()
