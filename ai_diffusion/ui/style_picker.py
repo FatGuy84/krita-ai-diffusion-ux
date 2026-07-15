@@ -43,7 +43,18 @@ def _family_label(style: Style, arch: Arch) -> str:
     return arch.name
 
 
-_star_pixmap = QPixmap(str(theme.icon_path / "star.png"))
+def _tint_pixmap(pixmap: QPixmap, color) -> QPixmap:
+    tinted = QPixmap(pixmap.size())
+    tinted.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(tinted)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    painter.fillRect(tinted.rect(), color)
+    painter.end()
+    return tinted
+
+
+_star_pixmap = _tint_pixmap(QPixmap(str(theme.icon_path / "star.png")), Qt.GlobalColor.white)
 
 
 def _favorite_icon(base: QIcon) -> QIcon:
