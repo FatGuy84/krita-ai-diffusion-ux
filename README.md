@@ -20,83 +20,166 @@ upstream releases (currently based on v1.52.1).
 ## What's different from upstream
 
 ### Sequential wildcards & batch control
-* **Sequential wildcard syntax `[[a|b|c]]`**: unlike the random `{a|b|c}` syntax,
-  options are consumed in order across a batch — batch item 1 gets `a`, item 2
-  gets `b`, and so on. Multiple `[[...]]` groups form a **Cartesian product**
-  (`[[black|white]] [[cat|dog]]` generates all 4 combinations).
-* **LoRAs inside wildcards**: `<lora:...>` tags inside `[[...]]` groups are
-  correctly switched per batch item — each image is generated with its own LoRA
-  set, not just the first one.
-* **Batch count up to 1000** (upstream: 10) with an editable spinbox, plus a
-  one-click button that sets the batch count to the number of sequential
-  wildcard combinations in the prompt.
-* **Loop Generate**: toggle button next to Generate keeps enqueuing new
-  batches automatically as soon as the queue drains, until toggled off —
-  useful for unattended overnight generation. Auto-disables on errors.
+
+Upstream only has random wildcards `{a|b|c}`, where each generation picks one
+option at random. This fork adds a **sequential** variant using double
+brackets: `[[a|b|c]]`. Instead of picking randomly, batch item 1 gets `a`,
+item 2 gets `b`, item 3 gets `c`, item 4 wraps back to `a`, and so on — useful
+for systematically running through a fixed set of variations instead of
+hoping the dice land right.
+
+Multiple `[[...]]` groups in the same prompt combine into a **Cartesian
+product** across the whole batch. For example:
+
+```
+[[black|white]] cat, [[sitting|jumping]]
+```
+
+generates all 4 combinations (black+sitting, black+jumping, white+sitting,
+white+jumping) as batch items 1–4, then repeats. A button next to the batch
+count (the dice/shuffle icon) reads the prompt and sets the batch count to
+the exact number of combinations for you, so you don't have to count by hand.
+
+`<lora:name:weight>` tags work inside `[[...]]` groups too, and are switched
+correctly per batch item — each image in the batch is generated with its own
+LoRA set rather than all of them sharing whatever LoRA the first prompt
+evaluation picked (which is what happens upstream if you try this).
+
+Other batch changes:
+* **Batch count up to 1000** (upstream caps at 10), with a spinbox you can
+  type into directly instead of only dragging a tiny slider.
+* **Loop Generate**: a toggle button (circular arrow icon) next to Generate.
+  Turning it on starts a batch immediately, and every time the queue empties
+  it automatically enqueues another one — keeps running unattended (e.g.
+  overnight) until you toggle it off again. If generation fails outright
+  (bad prompt, disconnected server, etc.) it turns itself back off instead of
+  spinning uselessly.
 
 ### LoRA Browser
-A visual LoRA picker (funnel icon in the prompt field) integrated with
-[ComfyUI-Lora-Manager](https://github.com/willmiao/ComfyUI-Lora-Manager):
 
-* preview images (lazy-loaded), name search, tag filter, base-model filter,
-  favorites filter, adjustable thumbnail size
-* trigger words fetched from CivitAI metadata, insertable together with the
-  LoRA tag (per phrase group or all)
-* **multi-select**: pick several LoRAs and insert them as a random `{a|b}` or
-  sequential `[[a|b]]` wildcard group in one click, with per-LoRA trigger words
-* non-modal window (Krita stays interactive), disk-cached LoRA list for
-  instant reopening
-* falls back to a plain file list if Lora Manager is not installed
+Click the funnel icon in the prompt field to open a visual LoRA picker
+instead of typing `<lora:...>` tags from memory or scrolling a giant
+dropdown. It talks to [ComfyUI-Lora-Manager](https://github.com/willmiao/ComfyUI-Lora-Manager)
+if you have it installed, and falls back to a plain file-name list otherwise
+(no crash, just fewer features — no previews/tags/trigger words).
+
+With Lora Manager available you get:
+* **Preview thumbnails** for every LoRA, loaded lazily as you scroll so
+  opening the browser with hundreds of LoRAs doesn't stall
+* **Search** by name, **tag filter**, and a **base-model filter**
+  (SD1.5/SDXL/Illustrious/Pony/Flux/etc.)
+* **Favorites**, synced with whatever you've starred in Lora Manager itself
+* **Trigger words** pulled from CivitAI metadata — insert them alongside the
+  LoRA tag with one click, either a specific phrase group or all of them
+* **Adjustable thumbnail size** via a slider, and the whole list is cached to
+  disk so reopening the browser is instant instead of re-querying the server
+
+**Multi-select** (Ctrl/Shift-click) lets you pick several LoRAs at once and
+insert them as a single wildcard group — random `{a|b}` or sequential
+`[[a|b]]`, matching the wildcard syntax above — with each LoRA's trigger
+words carried along automatically. This is the fast way to set up "try LoRA
+A, then B, then C" batches without manually typing out the wildcard syntax.
+
+The dialog is non-modal, so Krita stays fully usable while it's open — no
+need to close it before painting or switching layers.
 
 ### Style Picker
-Style/checkpoint selection was an unmanageable dropdown once you have
-hundreds of presets. Replaced with a searchable, non-modal picker dialog
-(same design language as the LoRA browser):
 
-* live search by name/checkpoint, filter by base-model family
-* **base model family detection**: Illustrious and Pony checkpoints are
-  architecturally identical to SDXL, so they can't be told apart from the
-  model weights — a new per-style "Base Model Family" field defaults to a
-  filename-based guess (like the LoRA browser) but is manually overridable
-  from a dropdown, and drives the picker's filter
-* favorite styles (right-click or `F`), pinned in their own section above
-  the existing "Recently Used" list
+If you have more than a couple dozen style presets, the stock dropdown
+becomes unusable — hundreds of entries in one scrolling list with no way to
+search. This fork replaces it with the same kind of searchable, non-modal
+picker dialog as the LoRA browser. Click the style name/icon button
+(where the dropdown used to be) to open it.
+
+* **Live search** by style name or checkpoint file name
+* **Base-model family filter**, including a **"Base Model Family" field**
+  added to every style (editable in the style editor's advanced checkpoint
+  section, next to Architecture). Illustrious and Pony checkpoints use the
+  exact same architecture as SDXL — there is no way to tell them apart from
+  the model weights themselves — so this field defaults to a guess based on
+  the checkpoint's file name ("Auto") but can be overridden by hand from a
+  dropdown if the guess is wrong, and that's what the picker's filter uses
+* **Favorite styles**: right-click a style or hit `F` to star it; favorites
+  get pinned in their own section above the existing "Recently Used" list
+  (upstream already sorts by recent use — this just adds the same idea for
+  styles you always come back to, regardless of recency)
 
 ### Faster startup
-* **Model list disk cache**: the 700+ model discovery calls at startup are
-  cached per server; use the Refresh button to update after installing models.
+
+**Model list disk cache**: upstream re-queries the server for every single
+checkpoint/LoRA/etc. on every Krita startup, which is slow with large model
+libraries (700+ entries easily takes a while). This fork caches the
+discovered model list to disk per server URL, so subsequent startups load
+instantly from cache. Click the Refresh button in the connection settings
+after installing new models to force a re-scan.
 
 ### History & export
-* **Split prompt actions**: "Apply Prompt to Field" and "Copy Prompt to
-  Clipboard" are separate context menu entries (upstream does both at once),
-  each available in raw and evaluated form.
-* **Search & filter the generation history**: search box filters by prompt
-  text live; two toggles show only favorited or only canvas-applied images.
-* **Favorite images**: mark generated results as favorites (right-click or
-  `F` hotkey), persisted across restarts, shown as a star badge on the
-  thumbnail.
-* **Save to Eagle**: send generated images straight to the
-  [Eagle](https://eagle.cool) library via its local API — with the prompt as
-  title, full generation metadata as annotation, and style/LoRA names as tags.
+
+* **Split prompt actions**: upstream's "Copy Prompt" context-menu action both
+  copied to clipboard *and* overwrote your current prompt field in one click,
+  which is surprising if you only wanted one of those. Now there are four
+  separate entries: Apply/Copy × raw/evaluated prompt.
+* **Search the generation history**: a search box above the history list
+  filters by prompt text live as you type (matches the raw and evaluated
+  positive/negative prompts).
+* **Favorite / Applied filters**: two toggle buttons above the history —
+  one shows only images you've starred as favorites, the other shows only
+  images you've actually applied to the canvas. Combine with the search box
+  to narrow down a long history fast.
+* **Favorite images**: right-click a result or hit `F` to mark it as a
+  favorite — shown as a white star badge in the corner of the thumbnail
+  (distinct from the existing "applied to canvas" badge in the opposite
+  corner). Favorites are saved into the document and survive closing and
+  reopening it.
+* **Preview size slider**: a slider above the history resizes all thumbnails
+  live, from small (fit more on screen) to large (see detail without
+  clicking through). Thumbnails are always regenerated from the
+  full-resolution result, so they stay sharp at any size.
+* **Save to Eagle**: if you use [Eagle](https://eagle.cool) to organize
+  reference images, right-click a result → "Save to Eagle" sends it straight
+  into your library via Eagle's local API, with the prompt as the item
+  title, full generation metadata (seed, sampler, LoRAs, etc.) as the
+  annotation, and the style/LoRA names as tags — no manual export/import
+  round-trip through the filesystem.
 
 ### Custom workflows
-Ready-made Krita-adapted workflows in [`custom_workflows/`](custom_workflows/)
-for the [Krea 2 Identity Edit](https://huggingface.co/conradlocke/krea2-identity-edit)
-model (requires the [comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit)
-node pack):
 
-* **Krea2 Identity Edit** — single reference, the canvas is the edit source
-* **Krea2 Identity Edit (Character + Scene)** — canvas is the scene, a
-  selectable Krita layer provides the person reference
-* both expose prompt, grounding_px and two stackable LoRA slots (dropdown with
-  all server LoRAs) as Krita parameters
+Ready-made Krita-adapted ComfyUI workflows live in
+[`custom_workflows/`](custom_workflows/), for the
+[Krea 2 Identity Edit](https://huggingface.co/conradlocke/krea2-identity-edit)
+model. This requires the
+[comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit) custom
+node pack installed on your ComfyUI server (the model uses dual conditioning
+that stock ComfyUI nodes can't provide).
 
-Copy them to `%APPDATA%\krita\ai_diffusion\workflows\` to use.
+* **Krea2 Identity Edit** — single reference: the current Krita canvas is
+  both the scene and the identity source for the edit.
+* **Krea2 Identity Edit (Character + Scene)** — two references: the canvas
+  provides the scene, and a second, selectable Krita layer provides the
+  person/character reference to composite in. Handy for "put this character
+  into this scene" style edits.
+
+Both workflows expose the prompt, `grounding_px` (edit strength/precision),
+and **two stackable LoRA slots** as regular Krita parameters — the LoRA
+slots are populated from a dropdown of every LoRA your server knows about,
+same as a normal style, so you can layer character/style LoRAs on top of the
+edit without touching the underlying ComfyUI graph.
+
+To use them, copy the `.json` files from `custom_workflows/` into
+`%APPDATA%\krita\ai_diffusion\workflows\`, then pick the workflow from the
+Custom workspace's workflow dropdown in Krita.
 
 ### Fixes
-* Refresh Models button now actually updates the "missing models" display
-  (upstream bug: stale warning until full reconnect)
-* no crash when running custom workflow graphs without a style node
+
+* **Refresh Models button was a no-op for the "missing models" warning**:
+  clicking Refresh after installing a missing model correctly re-scanned the
+  server, but the connection panel's warning banner never updated to reflect
+  it — you had to fully disconnect and reconnect to make the stale warning
+  go away. Refresh now updates the banner immediately.
+* **Custom workflow graphs without a style node crashed on every generate**:
+  any custom ComfyUI graph that doesn't include a `ETN_KritaStyleAndPrompt`
+  node (e.g. a plain face-swap workflow) hit an unguarded `None` access and
+  threw an error on every single generation attempt. Fixed.
 
 ## Installation
 
