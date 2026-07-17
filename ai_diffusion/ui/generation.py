@@ -227,6 +227,7 @@ class HistoryWidget(QListWidget):
         "steps": _("Sampler Steps"),
         "guidance": _("Guidance Strength (CFG Scale)"),
         "control": _("Control Layers"),
+        "duration": _("Generation Time"),
     }
 
     def _job_info(self, params: JobParams):
@@ -260,6 +261,9 @@ class HistoryWidget(QListWidget):
                     t = f"{v.get('mode')}: {v.get('image', '')[:30]} @{v.get('strength', '?')}"
                     control_text.append(t)
                 value = " | ".join(control_text)
+            if key == "duration" and isinstance(value, (int, float)):
+                minutes, seconds = divmod(value, 60)
+                value = f"{int(minutes)}m {seconds:.1f}s" if minutes else f"{seconds:.1f}s"
             s = f"{self._job_info_translations.get(key, key)}: {value}"
             s = wrap_text(s, 80, subsequent_indent=" ")
             strings.append(s)

@@ -127,6 +127,7 @@ class Job:
     results: ImageCollection
     in_use: dict[int, bool]
     favorites: dict[int, bool]
+    started_at: datetime | None
 
     def __init__(self, id: str | None, kind: JobKind, params: JobParams):
         self.id = id
@@ -136,6 +137,7 @@ class Job:
         self.results = ImageCollection()
         self.in_use = {}
         self.favorites = {}
+        self.started_at = None
 
     def result_was_used(self, index: int):
         return self.in_use.get(index, False)
@@ -204,10 +206,14 @@ class JobQueue(QObject):
     def notify_started(self, job: Job):
         if job.state is not JobState.executing:
             job.state = JobState.executing
+            job.started_at = datetime.now(timezone.utc)
             self.count_changed.emit()
 
     def notify_finished(self, job: Job):
         job.state = JobState.finished
+        if job.started_at is not None:
+            duration = (datetime.now(timezone.utc) - job.started_at).total_seconds()
+            job.params.metadata["duration"] = round(duration, 1)
         self.job_finished.emit(job)
         self._cancel_earlier_jobs(job)
         self.count_changed.emit()
