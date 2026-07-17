@@ -116,7 +116,7 @@ class HistoryWidget(QListWidget):
         self._search_text = ""
         self._favorites_only = False
         self._applied_only = False
-        self._min_rating = 0
+        self._rating_filter = 0
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setResizeMode(QListView.Adjust)
@@ -365,7 +365,7 @@ class HistoryWidget(QListWidget):
         if item := self._find(id):
             job = ensure(self._model.jobs.find(id.job))
             item.setIcon(self._image_thumbnail(job, id.image))
-        if self._favorites_only or self._applied_only or self._min_rating > 0:
+        if self._favorites_only or self._applied_only or self._rating_filter > 0:
             self._apply_filter()
 
     def select_item(self):
@@ -406,8 +406,8 @@ class HistoryWidget(QListWidget):
         self._applied_only = value
         self._apply_filter()
 
-    def set_min_rating(self, value: int):
-        self._min_rating = value
+    def set_rating_filter(self, value: int):
+        self._rating_filter = value
         self._apply_filter()
 
     def _item_matches_filter(self, item: QListWidgetItem) -> bool:
@@ -419,7 +419,7 @@ class HistoryWidget(QListWidget):
             return False
         if self._applied_only and not job.result_was_used(index or 0):
             return False
-        if self._min_rating > 0 and job.rating(index or 0) < self._min_rating:
+        if self._rating_filter > 0 and job.rating(index or 0) != self._rating_filter:
             return False
         if self._search_text:
             haystack = " ".join(
@@ -988,8 +988,8 @@ class GenerationWidget(QWidget):
         self.history_min_rating = QComboBox(self)
         self.history_min_rating.addItem(_("Any Rating"), 0)
         for stars in range(1, 6):
-            self.history_min_rating.addItem("★" * stars + "+", stars)
-        self.history_min_rating.setToolTip(_("Show only images rated at least this high (1-5 to rate)"))
+            self.history_min_rating.addItem("★" * stars, stars)
+        self.history_min_rating.setToolTip(_("Show only images with exactly this rating (1-5 to rate)"))
 
         history_filter_layout = QHBoxLayout()
         history_filter_layout.addWidget(self.history_search, 1)
@@ -1015,7 +1015,7 @@ class GenerationWidget(QWidget):
         self.history_favorites_only.toggled.connect(self.history.set_favorites_only)
         self.history_applied_only.toggled.connect(self.history.set_applied_only)
         self.history_min_rating.currentIndexChanged.connect(
-            lambda: self.history.set_min_rating(self.history_min_rating.currentData())
+            lambda: self.history.set_rating_filter(self.history_min_rating.currentData())
         )
         self.history_size_slider.valueChanged.connect(self.history.set_thumb_size)
         layout.addWidget(self.history)
