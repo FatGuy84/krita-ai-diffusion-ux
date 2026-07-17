@@ -131,6 +131,13 @@ after installing new models to force a re-scan.
   (distinct from the existing "applied to canvas" badge in the opposite
   corner). Favorites are saved into the document and survive closing and
   reopening it.
+* **1-5 star rating**: press `1`–`5` while a result is selected to rate it
+  (pressing the same number again clears it), or right-click → "Set Rating".
+  Shown as a row of yellow stars in the bottom-left corner of the thumbnail.
+  A "Rating" dropdown above the history filters to an *exact* rating (not
+  "N and up") — useful for triaging a big batch: rate as you review, then
+  filter to e.g. only 4★ results. Ratings are saved into the document like
+  favorites.
 * **Preview size slider**: a slider above the history resizes all thumbnails
   live, from small (fit more on screen) to large (see detail without
   clicking through). Thumbnails are always regenerated from the
