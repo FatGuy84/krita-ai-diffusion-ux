@@ -127,6 +127,7 @@ class Job:
     results: ImageCollection
     in_use: dict[int, bool]
     favorites: dict[int, bool]
+    ratings: dict[int, int]
     started_at: datetime | None
 
     def __init__(self, id: str | None, kind: JobKind, params: JobParams):
@@ -137,6 +138,7 @@ class Job:
         self.results = ImageCollection()
         self.in_use = {}
         self.favorites = {}
+        self.ratings = {}
         self.started_at = None
 
     def result_was_used(self, index: int):
@@ -144,6 +146,9 @@ class Job:
 
     def is_favorite(self, index: int):
         return self.favorites.get(index, False)
+
+    def rating(self, index: int) -> int:
+        return self.ratings.get(index, 0)
 
 
 class JobQueue(QObject):
@@ -160,6 +165,7 @@ class JobQueue(QObject):
     result_used = pyqtSignal(Item)
     result_discarded = pyqtSignal(Item)
     favorite_changed = pyqtSignal(Item)
+    rating_changed = pyqtSignal(Item)
 
     def __init__(self):
         super().__init__()
@@ -235,6 +241,12 @@ class JobQueue(QObject):
         job = ensure(self.find(job_id))
         job.favorites[index] = not job.is_favorite(index)
         self.favorite_changed.emit(self.Item(job_id, index))
+
+    def set_rating(self, job_id: str, index: int, rating: int):
+        job = ensure(self.find(job_id))
+        # clicking the same rating again clears it
+        job.ratings[index] = 0 if job.rating(index) == rating else rating
+        self.rating_changed.emit(self.Item(job_id, index))
 
     def select(self, job_id: str, index: int):
         self.selection = [self.Item(job_id, index)]

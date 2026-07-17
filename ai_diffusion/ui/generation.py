@@ -93,6 +93,7 @@ class HistoryWidget(QListWidget):
     _thumb_size = 96
     _applied_icon = Image.load(theme.icon_path / "star.png")
     _favorite_icon = _tint_image(_applied_icon, QColor(255, 255, 255))
+    _rating_star = Image.scale(_applied_icon, Extent(14, 14))  # native yellow
     _list_css = f"""
         QListWidget {{ background-color: transparent; }}
         QListWidget::item:selected {{ border: 1px solid {theme.grey}; }}
@@ -115,6 +116,7 @@ class HistoryWidget(QListWidget):
         self._search_text = ""
         self._favorites_only = False
         self._applied_only = False
+        self._min_rating = 0
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setResizeMode(QListView.Adjust)
@@ -165,6 +167,7 @@ class HistoryWidget(QListWidget):
             jobs.result_used.connect(self.update_image_thumbnail),
             jobs.result_discarded.connect(self.remove_image),
             jobs.favorite_changed.connect(self.update_image_thumbnail),
+            jobs.rating_changed.connect(self.update_image_thumbnail),
         ]
         self.rebuild()
         self.update_selection()
@@ -362,7 +365,7 @@ class HistoryWidget(QListWidget):
         if item := self._find(id):
             job = ensure(self._model.jobs.find(id.job))
             item.setIcon(self._image_thumbnail(job, id.image))
-        if self._favorites_only or self._applied_only:
+        if self._favorites_only or self._applied_only or self._min_rating > 0:
             self._apply_filter()
 
     def select_item(self):
@@ -403,6 +406,10 @@ class HistoryWidget(QListWidget):
         self._applied_only = value
         self._apply_filter()
 
+    def set_min_rating(self, value: int):
+        self._min_rating = value
+        self._apply_filter()
+
     def _item_matches_filter(self, item: QListWidgetItem) -> bool:
         job_id, index = self.item_info(item)
         job = self._model.jobs.find(job_id)
@@ -411,6 +418,8 @@ class HistoryWidget(QListWidget):
         if self._favorites_only and not job.is_favorite(index or 0):
             return False
         if self._applied_only and not job.result_was_used(index or 0):
+            return False
+        if self._min_rating > 0 and job.rating(index or 0) < self._min_rating:
             return False
         if self._search_text:
             haystack = " ".join(
@@ -486,6 +495,9 @@ class HistoryWidget(QListWidget):
             elif e.key() == Qt.Key.Key_F:
                 self._toggle_favorite()
                 e.accept()
+            elif Qt.Key.Key_1 <= e.key() <= Qt.Key.Key_5:
+                self._set_selected_rating(e.key() - Qt.Key.Key_0)
+                e.accept()
         return super().event(e)
 
     def _find(self, id: JobQueue.Item):
@@ -506,8 +518,14 @@ class HistoryWidget(QListWidget):
             thumb = Image.crop(thumb, Bounds(0, 0, thumb.extent.width, min_height))
         if job.result_was_used(index):  # add tiny star icon top-right to mark used results
             thumb.draw_image(self._applied_icon, offset=(thumb.extent.width - 28, 4))
-        if job.is_favorite(index):  # add tiny red star icon top-left to mark favorites
+        if job.is_favorite(index):  # add tiny star icon top-left to mark favorites
             thumb.draw_image(self._favorite_icon, offset=(4, 4))
+        rating = job.rating(index)
+        if rating > 0:  # row of yellow stars bottom-left to show the rating
+            star_w = self._rating_star.extent.width
+            y = thumb.extent.height - self._rating_star.extent.height - 4
+            for i in range(rating):
+                thumb.draw_image(self._rating_star, offset=(4 + i * (star_w - 3), y))
         return thumb.to_icon()
 
     def _show_context_menu(self, pos: QPoint):
@@ -530,6 +548,16 @@ class HistoryWidget(QListWidget):
             is_fav = job is not None and job.is_favorite(index or 0)
             fav_label = _("Remove from Favorites") if is_fav else _("Mark as Favorite")
             menu.addAction(fav_label + "\tF", self._toggle_favorite)
+            current_rating = job.rating(index or 0) if job is not None else 0
+            rating_menu = menu.addMenu(_("Set Rating"))
+            for stars in range(1, 6):
+                label = "★" * stars + "☆" * (5 - stars)
+                action = ensure(rating_menu.addAction(label + f"\t{stars}", self._make_rating_setter(stars)))
+                action.setCheckable(True)
+                action.setChecked(stars == current_rating)
+            if current_rating > 0:
+                rating_menu.addSeparator()
+                rating_menu.addAction(_("Clear Rating"), self._make_rating_setter(0))
             menu.addSeparator()
             menu.addAction(_("Save to Eagle"), self._save_to_eagle)
             save_action = ensure(menu.addAction(_("Save Image"), self._save_image))
@@ -616,6 +644,15 @@ class HistoryWidget(QListWidget):
         for item in items:
             job_id, image_index = self.item_info(item)
             self._model.jobs.toggle_favorite(job_id, image_index or 0)
+
+    def _set_selected_rating(self, rating: int):
+        items = self.selectedItems()
+        for item in items:
+            job_id, image_index = self.item_info(item)
+            self._model.jobs.set_rating(job_id, image_index or 0, rating)
+
+    def _make_rating_setter(self, rating: int):
+        return lambda: self._set_selected_rating(rating)
 
     def _discard_image(self, confirm=True):
         confirm = confirm and settings.confirm_discard_image
@@ -944,14 +981,21 @@ class GenerationWidget(QWidget):
         self.history_favorites_only.setToolTip(_("Show only favorite images (F to toggle)"))
 
         self.history_applied_only = QToolButton(self)
-        self.history_applied_only.setIcon(HistoryWidget._applied_icon.to_icon())
+        self.history_applied_only.setIcon(theme.icon("apply"))
         self.history_applied_only.setCheckable(True)
         self.history_applied_only.setToolTip(_("Show only images that were applied to the canvas"))
+
+        self.history_min_rating = QComboBox(self)
+        self.history_min_rating.addItem(_("Any Rating"), 0)
+        for stars in range(1, 6):
+            self.history_min_rating.addItem("★" * stars + "+", stars)
+        self.history_min_rating.setToolTip(_("Show only images rated at least this high (1-5 to rate)"))
 
         history_filter_layout = QHBoxLayout()
         history_filter_layout.addWidget(self.history_search, 1)
         history_filter_layout.addWidget(self.history_favorites_only)
         history_filter_layout.addWidget(self.history_applied_only)
+        history_filter_layout.addWidget(self.history_min_rating)
         layout.addLayout(history_filter_layout)
 
         history_size_label = QLabel(_("Size:"), self)
@@ -970,6 +1014,9 @@ class GenerationWidget(QWidget):
         self.history_search.textChanged.connect(self.history.set_search_filter)
         self.history_favorites_only.toggled.connect(self.history.set_favorites_only)
         self.history_applied_only.toggled.connect(self.history.set_applied_only)
+        self.history_min_rating.currentIndexChanged.connect(
+            lambda: self.history.set_min_rating(self.history_min_rating.currentData())
+        )
         self.history_size_slider.valueChanged.connect(self.history.set_thumb_size)
         layout.addWidget(self.history)
 
