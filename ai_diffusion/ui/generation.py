@@ -1224,9 +1224,7 @@ class GenerationWidget(QWidget):
                 text = _("Refine")
         else:
             self.inpaint_mode_button.setVisible(True)
-            self.custom_inpaint.setVisible(
-                self.model.inpaint.mode is InpaintMode.custom and self.model.strength < 1.0
-            )
+            self.custom_inpaint.setVisible(self.model.inpaint.mode is InpaintMode.custom)
             mode = self.model.resolve_inpaint_mode()
             text = _("Generate")
             if is_edit:
