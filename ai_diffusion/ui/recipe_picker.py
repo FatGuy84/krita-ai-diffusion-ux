@@ -99,7 +99,7 @@ class RecipePickerDialog(QDialog):
         self._grid.setWordWrap(True)
         self._grid.setSpacing(4)
         self._grid.itemSelectionChanged.connect(self._on_selection_changed)
-        self._grid.itemDoubleClicked.connect(lambda item: self._apply_recipe())
+        self._grid.itemDoubleClicked.connect(lambda item: self._apply_recipe(replace=True))
 
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
@@ -112,19 +112,27 @@ class RecipePickerDialog(QDialog):
         self._selected_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._selected_label.setWordWrap(True)
 
-        self._apply_btn = QPushButton(_("Apply Recipe"), self)
-        self._apply_btn.setEnabled(False)
-        self._apply_btn.setToolTip(
-            _("Replace the current prompt and negative prompt, and add the recipe's LoRAs")
+        self._add_btn = QPushButton(_("Add to Prompt"), self)
+        self._add_btn.setEnabled(False)
+        self._add_btn.setToolTip(
+            _("Append the recipe's prompt and LoRAs to the current prompt, on a new line")
         )
-        self._apply_btn.clicked.connect(self._apply_recipe)
+        self._add_btn.clicked.connect(lambda: self._apply_recipe(replace=False))
+
+        self._replace_btn = QPushButton(_("Replace Prompt"), self)
+        self._replace_btn.setEnabled(False)
+        self._replace_btn.setToolTip(
+            _("Replace the current prompt and negative prompt with the recipe's")
+        )
+        self._replace_btn.clicked.connect(lambda: self._apply_recipe(replace=True))
 
         close_btn = QPushButton(_("Close"), self)
         close_btn.clicked.connect(self.close)
 
         bottom_layout = QHBoxLayout()
         bottom_layout.addWidget(self._selected_label, 1)
-        bottom_layout.addWidget(self._apply_btn)
+        bottom_layout.addWidget(self._add_btn)
+        bottom_layout.addWidget(self._replace_btn)
         bottom_layout.addWidget(close_btn)
 
         # ── status ──
@@ -295,16 +303,18 @@ class RecipePickerDialog(QDialog):
         recipe = self._selected_recipe()
         if recipe is None:
             self._selected_label.setText(_("No recipe selected"))
-            self._apply_btn.setEnabled(False)
+            self._add_btn.setEnabled(False)
+            self._replace_btn.setEnabled(False)
             return
         missing = [l.name for l in recipe.loras if not l.available]
         text = f"{recipe.title}  [{recipe.base_model or '?'}]  ({len(recipe.loras)} LoRAs)"
         if missing:
             text += "  ⚠ " + _("missing:") + " " + ", ".join(missing)
         self._selected_label.setText(text)
-        self._apply_btn.setEnabled(True)
+        self._add_btn.setEnabled(True)
+        self._replace_btn.setEnabled(True)
 
-    def _apply_recipe(self):
+    def _apply_recipe(self, replace: bool):
         recipe = self._selected_recipe()
         if recipe is None:
             return
@@ -320,8 +330,21 @@ class RecipePickerDialog(QDialog):
         ]
         if extra_tags:
             prompt = prompt.rstrip("\n") + "\n" + " ".join(extra_tags)
-        model.regions.positive = prompt
-        if recipe.negative_prompt:
-            model.regions.negative = recipe.negative_prompt
+
+        region = model.regions
+        if replace:
+            region.positive = prompt
+            if recipe.negative_prompt:
+                region.negative = recipe.negative_prompt
+        else:
+            current = region.positive
+            region.positive = current.rstrip("\n") + "\n" + prompt if current.strip() else prompt
+            if recipe.negative_prompt:
+                current_neg = region.negative
+                region.negative = (
+                    current_neg.rstrip("\n") + "\n" + recipe.negative_prompt
+                    if current_neg.strip()
+                    else recipe.negative_prompt
+                )
         self.recipe_applied.emit(recipe.id)
         self.close()
