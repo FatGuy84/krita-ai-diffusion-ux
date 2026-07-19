@@ -204,6 +204,15 @@ class ActiveRegionWidget(QFrame):
         self._lora_browse_button.clicked.connect(self._open_lora_picker)
         self._lora_dialog: LoraPickerDialog | None = None
 
+        self._recipe_browse_button = QToolButton(self)
+        self._recipe_browse_button.setIcon(theme.icon("import"))
+        self._recipe_browse_button.setToolTip(_("Browse and apply recipes (Lora Manager)"))
+        self._recipe_browse_button.setStyleSheet(
+            "QToolButton { background: #40808080; border: 1px solid #60808080; border-radius: 2px; }"
+        )
+        self._recipe_browse_button.clicked.connect(self._open_recipe_picker)
+        self._recipe_dialog = None
+
         self._setup_bindings(self._region)
         settings.changed.connect(self.update_settings)
 
@@ -445,12 +454,15 @@ class ActiveRegionWidget(QFrame):
         self._show_negative_warning()
 
     def _layout_language_button(self):
-        # LoRA browse button — top-right corner of positive prompt
+        # LoRA + recipe browse buttons — top-right corner of positive prompt
         btn_s = self.fontMetrics().height() + 2
         pos_geo = self.positive.geometry()
         self._lora_browse_button.move(pos_geo.right() - btn_s - 2, pos_geo.top() + 2)
         self._lora_browse_button.resize(QSize(btn_s, btn_s))
         self._lora_browse_button.raise_()
+        self._recipe_browse_button.move(pos_geo.right() - 2 * btn_s - 5, pos_geo.top() + 2)
+        self._recipe_browse_button.resize(QSize(btn_s, btn_s))
+        self._recipe_browse_button.raise_()
 
         if settings.prompt_translation:
             pos = self.positive.geometry().bottomRight()
@@ -515,6 +527,17 @@ class ActiveRegionWidget(QFrame):
         self._lora_dialog.show()
         self._lora_dialog.raise_()
         self._lora_dialog.activateWindow()
+
+    def _open_recipe_picker(self):
+        from .recipe_picker import RecipePickerDialog
+
+        if self._recipe_dialog is None:
+            model = root.active_model
+            arch = model.arch.name if model else ""
+            self._recipe_dialog = RecipePickerDialog(arch, parent=self)
+        self._recipe_dialog.show()
+        self._recipe_dialog.raise_()
+        self._recipe_dialog.activateWindow()
 
     def resizeEvent(self, a0):
         super().resizeEvent(a0)

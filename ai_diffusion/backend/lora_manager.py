@@ -226,6 +226,86 @@ async def fetch_loras_pages(requests: RequestManager, base_url: str):
         log.warning(f"Could not fetch LoRA list: {e}")
 
 
+@dataclass
+class RecipeLora:
+    name: str  # lora file name without extension, usable in <lora:...> tags
+    strength: float
+    available: bool  # present in the local library and not excluded
+
+
+@dataclass
+class RecipeInfo:
+    id: str
+    title: str
+    base_model: str = ""
+    prompt: str = ""
+    negative_prompt: str = ""
+    checkpoint: str = ""
+    preview_url: str = ""
+    favorite: bool = False
+    loras: list[RecipeLora] = field(default_factory=list)
+
+    @staticmethod
+    def from_api(data: dict, base_url: str) -> RecipeInfo:
+        gen = data.get("gen_params") or {}
+        checkpoint = (data.get("checkpoint") or {}).get("file_name", "") or ""
+        preview = data.get("file_url", "")
+        if preview.startswith("/"):
+            preview = base_url + preview
+        loras = []
+        for entry in data.get("loras") or []:
+            name = _clean_name(entry.get("file_name", ""))
+            if not name:
+                continue
+            available = bool(
+                entry.get("inLibrary", False)
+                and not entry.get("isDeleted", False)
+                and not entry.get("exclude", False)
+            )
+            loras.append(RecipeLora(name, float(entry.get("strength", 1.0)), available))
+        return RecipeInfo(
+            id=data.get("id", ""),
+            title=data.get("title", ""),
+            base_model=data.get("base_model", ""),
+            prompt=gen.get("prompt", ""),
+            negative_prompt=gen.get("negative_prompt", ""),
+            checkpoint=checkpoint,
+            preview_url=preview,
+            favorite=bool(data.get("favorite", False)),
+            loras=loras,
+        )
+
+
+async def fetch_recipes(requests: RequestManager, base_url: str) -> list[RecipeInfo]:
+    """Fetch all recipes from ComfyUI-Lora-Manager, paging through server results."""
+    base = base_url.rstrip("/")
+    result: list[RecipeInfo] = []
+    try:
+        page = 1
+        page_size = 100
+        while True:
+            data = await requests.get(
+                f"{base}/api/lm/recipes?page={page}&page_size={page_size}", timeout=15.0
+            )
+            if isinstance(data, (bytes, bytearray)):
+                data = json.loads(data)
+            if not isinstance(data, dict):
+                break
+            items = data.get("items") or []
+            if not items:
+                break
+            result.extend(RecipeInfo.from_api(item, base) for item in items)
+            total = data.get("total", len(result))
+            actual_page_size = data.get("page_size", page_size)
+            if page * actual_page_size >= total or len(items) < actual_page_size:
+                break
+            page += 1
+        log.info(f"Loaded {len(result)} recipes from Lora Manager")
+    except Exception as e:
+        log.warning(f"Could not fetch recipes: {e}")
+    return result
+
+
 async def fetch_preview_bytes(requests: RequestManager, preview_url: str) -> bytes | None:
     """Fetch preview image bytes. Returns None on error."""
     if not preview_url:
