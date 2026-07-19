@@ -163,17 +163,40 @@ class ActiveRegionWidget(QFrame):
         no_region_layout.addWidget(self._link_region_button)
         self._no_region.setLayout(no_region_layout)
 
+        self._lora_browse_button = QToolButton(self)
+        self._lora_browse_button.setIcon(theme.icon("lora"))
+        self._lora_browse_button.setToolTip(_("Browse and add LoRAs"))
+        self._lora_browse_button.setAutoRaise(True)
+        self._lora_browse_button.clicked.connect(self._open_lora_picker)
+        self._lora_dialog: LoraPickerDialog | None = None
+
+        self._recipe_browse_button = QToolButton(self)
+        self._recipe_browse_button.setIcon(theme.icon("recipe"))
+        self._recipe_browse_button.setToolTip(_("Browse and apply recipes (Lora Manager)"))
+        self._recipe_browse_button.setAutoRaise(True)
+        self._recipe_browse_button.clicked.connect(self._open_recipe_picker)
+        self._recipe_dialog = None
+
+        prompt_tools_layout = QHBoxLayout()
+        prompt_tools_layout.setContentsMargins(0, 0, 0, 0)
+        prompt_tools_layout.setSpacing(2)
+        prompt_tools_layout.addStretch()
+        prompt_tools_layout.addWidget(self._recipe_browse_button)
+        prompt_tools_layout.addWidget(self._lora_browse_button)
+
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         if header is PromptHeader.icon:
             self._header.setVisible(False)
+            layout.addLayout(prompt_tools_layout)
             positive_layout = QHBoxLayout()
             positive_layout.addWidget(self._header_icon, alignment=Qt.AlignmentFlag.AlignTop)
             positive_layout.addWidget(self.positive, 1)
             layout.addLayout(positive_layout)
         else:
             layout.addWidget(self._header)
+            layout.addLayout(prompt_tools_layout)
             layout.addWidget(self.positive)
         layout.addWidget(self.negative)
         layout.addWidget(self._no_region)
@@ -194,24 +217,6 @@ class ActiveRegionWidget(QFrame):
         self._negative_warning.setPixmap(theme.icon("alert").pixmap(font_height, font_height))
         self._negative_warning.setToolTip(_("The selected Style does not use the negative prompt."))
         self._negative_warning.setVisible(False)
-
-        self._lora_browse_button = QToolButton(self)
-        self._lora_browse_button.setIcon(theme.icon("filter"))
-        self._lora_browse_button.setToolTip(_("Browse and add LoRAs"))
-        self._lora_browse_button.setStyleSheet(
-            "QToolButton { background: #40808080; border: 1px solid #60808080; border-radius: 2px; }"
-        )
-        self._lora_browse_button.clicked.connect(self._open_lora_picker)
-        self._lora_dialog: LoraPickerDialog | None = None
-
-        self._recipe_browse_button = QToolButton(self)
-        self._recipe_browse_button.setIcon(theme.icon("import"))
-        self._recipe_browse_button.setToolTip(_("Browse and apply recipes (Lora Manager)"))
-        self._recipe_browse_button.setStyleSheet(
-            "QToolButton { background: #40808080; border: 1px solid #60808080; border-radius: 2px; }"
-        )
-        self._recipe_browse_button.clicked.connect(self._open_recipe_picker)
-        self._recipe_dialog = None
 
         self._setup_bindings(self._region)
         settings.changed.connect(self.update_settings)
@@ -454,16 +459,6 @@ class ActiveRegionWidget(QFrame):
         self._show_negative_warning()
 
     def _layout_language_button(self):
-        # LoRA + recipe browse buttons — top-right corner of positive prompt
-        btn_s = self.fontMetrics().height() + 2
-        pos_geo = self.positive.geometry()
-        self._lora_browse_button.move(pos_geo.right() - btn_s - 2, pos_geo.top() + 2)
-        self._lora_browse_button.resize(QSize(btn_s, btn_s))
-        self._lora_browse_button.raise_()
-        self._recipe_browse_button.move(pos_geo.right() - 2 * btn_s - 5, pos_geo.top() + 2)
-        self._recipe_browse_button.resize(QSize(btn_s, btn_s))
-        self._recipe_browse_button.raise_()
-
         if settings.prompt_translation:
             pos = self.positive.geometry().bottomRight()
             if self.has_negative:

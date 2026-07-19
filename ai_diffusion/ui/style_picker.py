@@ -181,7 +181,18 @@ class StylePickerDialog(QDialog):
 
         self._list.clear()
         section = None  # None | "favorites" | "recent" | "all"
-        for style in self._styles:
+
+        # group into contiguous sections (favorites > recent > all) so each
+        # header appears exactly once - favorites can be scattered through the
+        # recent+remaining ordering otherwise
+        def bucket(style: Style) -> int:
+            if self._is_favorite(style):
+                return 0
+            if style.filename in self._recent:
+                return 1
+            return 2
+
+        for style in sorted(self._styles, key=bucket):
             arch = resolve_arch(style, client)
             if family_filter and style.effective_family(arch) != family_filter:
                 continue
