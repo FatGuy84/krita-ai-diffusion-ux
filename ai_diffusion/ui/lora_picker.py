@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
 from PyQt5.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QIcon, QPixmap
+from PyQt5.QtGui import QIcon, QPainter, QPixmap
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -57,6 +63,37 @@ def _is_video_url(url: str) -> bool:
     # so check the whole url rather than stripping the query string
     lower = url.lower()
     return any(lower.endswith(ext) for ext in _VIDEO_EXTENSIONS)
+
+
+_ffmpeg_path = shutil.which("ffmpeg")
+
+
+def _extract_video_frame(data: bytes) -> bytes | None:
+    """Extract the first frame of a video as JPEG using ffmpeg. Returns None if
+    ffmpeg is not installed or extraction fails. Runs blocking - call in executor."""
+    if _ffmpeg_path is None:
+        return None
+    src = out = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+            f.write(data)
+            src = Path(f.name)
+        out = src.with_suffix(".jpg")
+        subprocess.run(
+            [_ffmpeg_path, "-y", "-i", str(src), "-frames:v", "1", "-f", "image2", str(out)],
+            capture_output=True,
+            timeout=20,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+        )
+        if out.exists() and out.stat().st_size > 0:
+            return out.read_bytes()
+        return None
+    except Exception:
+        return None
+    finally:
+        for p in (src, out):
+            if p is not None:
+                p.unlink(missing_ok=True)
 
 
 class LoraPickerDialog(QDialog):
@@ -377,8 +414,8 @@ class LoraPickerDialog(QDialog):
             lora: LoraInfo = item.data(Qt.ItemDataRole.UserRole)
             if not lora.preview_url or lora.sha256 in self._preview_cache:
                 continue
-            if _is_video_url(lora.preview_url):
-                continue  # handled synchronously in _populate_grid
+            if _is_video_url(lora.preview_url) and _ffmpeg_path is None:
+                continue  # no decoder available - placeholder set in _populate_grid
             if lora.sha256 in self._pending_previews:
                 continue
             self._pending_previews.add(lora.sha256)
@@ -389,10 +426,20 @@ class LoraPickerDialog(QDialog):
         if client is None:
             return
         data = await fetch_preview_bytes(client._requests, lora.preview_url)
+        is_video = _is_video_url(lora.preview_url)
+        if data and is_video:
+            # extract first frame via ffmpeg (off the UI thread)
+            loop = asyncio.get_running_loop()
+            data = await loop.run_in_executor(None, _extract_video_frame, data)
         if data:
             pixmap = QPixmap()
             pixmap.loadFromData(data)
             if not pixmap.isNull():
+                if is_video:  # small play badge so animated previews are recognizable
+                    badge = theme.icon("play").pixmap(24, 24)
+                    painter = QPainter(pixmap)
+                    painter.drawPixmap(pixmap.width() - 28, pixmap.height() - 28, badge)
+                    painter.end()
                 self._preview_cache[lora.sha256] = pixmap
                 item.setIcon(self._scaled_icon(lora.sha256))
             else:
