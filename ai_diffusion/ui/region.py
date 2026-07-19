@@ -132,11 +132,11 @@ class ActiveRegionWidget(QFrame):
         self._header.setLayout(header_layout)
 
         self.positive = TextPromptWidget(parent=self)
-        self.positive.handle_dragged.connect(self._handle_dragging)
+        self.positive.handle_dragged.connect(self._handle_positive_dragging)
         self.positive.installEventFilter(self)
 
         self.negative = TextPromptWidget(line_count=1, is_negative=True, parent=self)
-        self.negative.handle_dragged.connect(self._handle_dragging)
+        self.negative.handle_dragged.connect(self._handle_negative_dragging)
         self.negative.installEventFilter(self)
 
         self._no_region = QWidget(self)
@@ -368,7 +368,12 @@ class ActiveRegionWidget(QFrame):
         return settings.show_negative_prompt and isinstance(self._region, RootRegion)
 
     def update_settings(self, key: str, value):
-        if key in {"prompt_line_count", "prompt_line_count_live"}:
+        if key in {
+            "prompt_line_count",
+            "prompt_line_count_live",
+            "negative_prompt_line_count",
+            "negative_prompt_line_count_live",
+        }:
             self._update_prompt_widgets()
         elif key == "show_negative_prompt":
             self.negative.text = ""
@@ -420,12 +425,18 @@ class ActiveRegionWidget(QFrame):
             self._language_button.setToolTip(text)
 
     def _update_prompt_widgets(self):
+        if self.has_negative:
+            self.negative.line_count = (
+                settings.negative_prompt_line_count_live
+                if self.is_slim
+                else settings.negative_prompt_line_count
+            )
         if not self.is_slim:
             self.positive.line_count = settings.prompt_line_count
         elif isinstance(self._region, Region):
             self.positive.line_count = 1
         elif self.has_negative:
-            self.positive.line_count = max(1, settings.prompt_line_count_live - 1)
+            self.positive.line_count = max(1, settings.prompt_line_count_live - self.negative.line_count)
         else:
             self.positive.line_count = settings.prompt_line_count_live
         self.negative.setVisible(self.has_negative)
@@ -467,25 +478,34 @@ class ActiveRegionWidget(QFrame):
 
     def _setup_resize_handle(self):
         can_resize = not (isinstance(self._region, Region) and self.is_slim)
-        self.positive.is_resizable = not self.has_negative and can_resize
+        self.positive.is_resizable = can_resize
         self.negative.is_resizable = self.has_negative and can_resize
 
-    def _handle_dragging(self, y_pos: int):
-        # math determined experimentally, sorry :(
-        if self.has_negative:
-            pos_height = self.positive.contentsRect().height()
-            neg_height = self.negative.contentsRect().height()
-            new_height = y_pos - neg_height + pos_height - 10
-        else:
-            new_height = y_pos - 5
-        fm = QFontMetrics(ensure(self.positive.document()).defaultFont())
-        new_line_count = round(new_height / fm.lineSpacing())
-        if 1 <= new_line_count <= theme.prompt_max_line_count:
+    def _handle_positive_dragging(self, y_pos: int):
+        new_line_count = self._drag_to_line_count(self.positive, y_pos)
+        if new_line_count is not None:
             if self.is_slim:
                 settings.prompt_line_count_live = new_line_count
             else:
                 settings.prompt_line_count = new_line_count
             self._update_prompt_widgets()
+
+    def _handle_negative_dragging(self, y_pos: int):
+        new_line_count = self._drag_to_line_count(self.negative, y_pos)
+        if new_line_count is not None:
+            if self.is_slim:
+                settings.negative_prompt_line_count_live = new_line_count
+            else:
+                settings.negative_prompt_line_count = new_line_count
+            self._update_prompt_widgets()
+
+    def _drag_to_line_count(self, widget: TextPromptWidget, y_pos: int):
+        new_height = y_pos - 5
+        fm = QFontMetrics(ensure(widget.document()).defaultFont())
+        new_line_count = round(new_height / fm.lineSpacing())
+        if 1 <= new_line_count <= theme.prompt_max_line_count:
+            return new_line_count
+        return None
 
     def _open_lora_picker(self):
         if self._lora_dialog is None:

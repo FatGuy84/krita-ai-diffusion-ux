@@ -318,6 +318,14 @@ class Settings(QObject):
     prompt_line_count_live: int
     _prompt_line_count_live = Setting("Prompt Line Count (Live)", 2)
 
+    negative_prompt_line_count: int
+    _negative_prompt_line_count = Setting(
+        _("Negative Prompt Line Count"), 1, _("Size of the text editor for negative prompts")
+    )
+
+    negative_prompt_line_count_live: int
+    _negative_prompt_line_count_live = Setting("Negative Prompt Line Count (Live)", 1)
+
     show_negative_prompt: bool
     _show_negative_prompt = Setting(
         _("Negative Prompt"), False, _("Show text editor to describe things to avoid")
