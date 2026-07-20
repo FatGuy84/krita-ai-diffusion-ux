@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
-from ..backend.api import InpaintMode
+from ..backend.api import InpaintMode, WorkflowKind
 from ..image import Bounds, ImageCollection
 from ..settings import settings
 from ..style import Style
@@ -59,6 +59,7 @@ class JobParams:
     has_mask: bool = False
     is_layered: bool = False
     inpaint_mode: InpaintMode | None = None
+    workflow_kind: WorkflowKind | None = None
     frame: tuple[int, int, int] = (0, 0, 0)
     animation_id: str = ""
     resize_canvas: bool = False
@@ -67,6 +68,10 @@ class JobParams:
     def from_dict(data: dict[str, Any]):
         data["bounds"] = Bounds(*data["bounds"])
         data["regions"] = [JobRegion.from_dict(r) for r in data.get("regions", [])]
+        if isinstance(data.get("inpaint_mode"), str):
+            data["inpaint_mode"] = InpaintMode[data["inpaint_mode"]]
+        if isinstance(data.get("workflow_kind"), str):
+            data["workflow_kind"] = WorkflowKind[data["workflow_kind"]]
         if "metadata" not in data:  # older documents before version 1.26.0
             data["name"] = data.get("prompt", "")
             data["metadata"] = {}

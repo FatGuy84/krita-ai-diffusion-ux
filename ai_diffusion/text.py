@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import NamedTuple
 
-from .backend.api import ConditioningInput, LoraInput, RegionInput
+from .backend.api import ConditioningInput, InpaintMode, LoraInput, RegionInput, WorkflowKind
 from .files import FileCollection, FileSource
 from .localization import translate as _
 from .model.jobs import JobParams
@@ -326,6 +326,38 @@ def edit_attention(text: str, positive: bool) -> str:
     )
 
 
+_workflow_kind_text = {
+    WorkflowKind.generate: "Generate",
+    WorkflowKind.refine: "Refine",
+    WorkflowKind.inpaint: "Inpaint",
+    WorkflowKind.refine_region: "Refine Region",
+    WorkflowKind.upscale_simple: "Upscale",
+    WorkflowKind.upscale_tiled: "Upscale",
+    WorkflowKind.control_image: "Control Image",
+    WorkflowKind.custom: "Custom",
+}
+
+_inpaint_mode_text = {
+    InpaintMode.fill: "Fill",
+    InpaintMode.expand: "Expand",
+    InpaintMode.add_object: "Add Content",
+    InpaintMode.remove_object: "Remove Content",
+    InpaintMode.replace_background: "Replace Background",
+    InpaintMode.custom: "Custom",
+}
+
+
+def create_mode_label(params: JobParams) -> str | None:
+    if params.workflow_kind is None:
+        return None
+    label = _workflow_kind_text.get(params.workflow_kind, params.workflow_kind.name)
+    if params.workflow_kind in (WorkflowKind.inpaint, WorkflowKind.refine_region):
+        detail = _inpaint_mode_text.get(params.inpaint_mode) if params.inpaint_mode else None
+        if detail:
+            label = f"{label} ({detail})"
+    return label
+
+
 # creates the img text metadata for embedding in PNG files in style like Automatic1111
 def create_img_metadata(params: JobParams):
     meta = params.metadata
@@ -367,5 +399,23 @@ def create_img_metadata(params: JobParams):
 
     if strength is not None and strength != 1.0:
         lines[-1] += f", Denoising strength: {strength}"
+
+    if mode := create_mode_label(params):
+        lines[-1] += f", Mode: {mode}"
+
+    custom_inpaint = meta.get("custom_inpaint")
+    if custom_inpaint:
+        if custom_inpaint.get("seamless"):
+            lines[-1] += ", Seamless: On"
+        if custom_inpaint.get("focus"):
+            lines[-1] += ", Focus: On"
+        if custom_inpaint.get("edit"):
+            lines[-1] += ", Edit: On"
+        fill = custom_inpaint.get("fill")
+        if fill and fill != "none":
+            lines[-1] += f", Fill: {fill.capitalize()}"
+        context = custom_inpaint.get("context")
+        if context:
+            lines[-1] += f", Context: {context}"
 
     return "\n".join(lines)

@@ -57,6 +57,7 @@ from ..model.properties import Bind, Binding, bind, bind_combo, bind_toggle
 from ..model.region import RootRegion
 from ..model.root import root
 from ..settings import settings
+from ..text import create_mode_label
 from ..style import Styles
 from ..util import ensure, flatten, sequence_equal
 from . import theme
@@ -231,6 +232,7 @@ class HistoryWidget(QListWidget):
         "guidance": _("Guidance Strength (CFG Scale)"),
         "control": _("Control Layers"),
         "duration": _("Generation Time"),
+        "custom_inpaint": _("Custom Inpaint Settings"),
     }
 
     def _job_info(self, params: JobParams):
@@ -245,6 +247,8 @@ class HistoryWidget(QListWidget):
             _("Click to toggle preview, double-click to apply."),
             "",
         ]
+        if mode := create_mode_label(params):
+            strings.append(_("Mode") + f": {mode}")
         for key, value in params.metadata.items():
             if key not in self._job_info_translations:
                 continue
@@ -267,6 +271,22 @@ class HistoryWidget(QListWidget):
             if key == "duration" and isinstance(value, (int, float)):
                 minutes, seconds = divmod(value, 60)
                 value = f"{int(minutes)}m {seconds:.1f}s" if minutes else f"{seconds:.1f}s"
+            if key == "custom_inpaint" and isinstance(value, dict):
+                parts = []
+                if value.get("seamless"):
+                    parts.append(_("Seamless"))
+                if value.get("focus"):
+                    parts.append(_("Focus"))
+                if value.get("edit"):
+                    parts.append(_("Edit"))
+                fill = value.get("fill")
+                if fill and fill != "none":
+                    parts.append(f"{_('Fill')}: {fill.capitalize()}")
+                if context := value.get("context"):
+                    parts.append(f"{_('Context')}: {context}")
+                if not parts:
+                    continue
+                value = " | ".join(parts)
             s = f"{self._job_info_translations.get(key, key)}: {value}"
             s = wrap_text(s, 80, subsequent_indent=" ")
             strings.append(s)

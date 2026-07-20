@@ -74,6 +74,13 @@ from .properties import ObservableProperties, Property
 from .region import Region, RegionLink, RootRegion, get_region_inpaint_mask, process_regions
 
 
+_inpaint_context_text = {
+    InpaintContext.automatic: "Automatic Context",
+    InpaintContext.mask_bounds: "Selection Bounds",
+    InpaintContext.entire_image: "Entire Image",
+}
+
+
 class QueueMode(Enum):
     back = 0
     front = 1
@@ -316,6 +323,22 @@ class DocumentModel(QObject, ObservableProperties):
                 )
             inpaint = calc_selection_pre_process(inpaint, selection_bounds, smod)
 
+        custom_inpaint_meta = None
+        if inpaint_mode is InpaintMode.custom:
+            ctx = self.inpaint.context
+            if ctx is InpaintContext.layer_bounds:
+                layer = self.layers.find(self.inpaint.context_layer_id)
+                context_label = layer.name if layer else "Layer"
+            else:
+                context_label = _inpaint_context_text.get(ctx, ctx.name)
+            custom_inpaint_meta = {
+                "seamless": self.inpaint.use_inpaint,
+                "focus": self.inpaint.use_prompt_focus,
+                "fill": self.inpaint.fill.name,
+                "context": context_label,
+                "edit": self.is_editing,
+            }
+
         input = workflow.prepare(
             workflow_kind,
             image or extent,
@@ -337,11 +360,14 @@ class DocumentModel(QObject, ObservableProperties):
         job_params.set_style(self.active_style, ensure(input.models).checkpoint)
         job_params.set_control(regions.control)
         job_params.inpaint_mode = inpaint_mode
+        job_params.workflow_kind = workflow_kind
         job_params.ref_layers = ref_layers
         job_params.is_layered = arch is Arch.qwen_l
         job_params.metadata.update(prompt_meta)
         job_params.metadata["loras"] = [{"name": l.name, "weight": l.strength} for l in loras]
         job_params.metadata["strength"] = strength
+        if custom_inpaint_meta is not None:
+            job_params.metadata["custom_inpaint"] = custom_inpaint_meta
         return input, job_params, original_conditioning, loras
 
     async def enqueue_jobs(
@@ -454,6 +480,9 @@ class DocumentModel(QObject, ObservableProperties):
         target_bounds = Bounds(0, 0, *params.target_extent)
         name = f"{target_bounds.width}x{target_bounds.height}"
         job_params = JobParams(target_bounds, name, seed=params.seed, regions=job_regions)
+        job_params.workflow_kind = (
+            WorkflowKind.upscale_tiled if params.use_diffusion else WorkflowKind.upscale_simple
+        )
         return input, job_params
 
     def upscale_image(self):
@@ -544,6 +573,7 @@ class DocumentModel(QObject, ObservableProperties):
             is_live=True,
         )
         params = JobParams(bounds, conditioning.positive, regions=job_regions)
+        params.workflow_kind = workflow_kind
         return input, params
 
     async def _generate_live(self, input: WorkflowInput, job_params: JobParams):
@@ -581,6 +611,7 @@ class DocumentModel(QObject, ObservableProperties):
             custom_input = CustomWorkflowInput(wf.root, params)
             metadata: dict[str, Any] = dict(self.custom.params)
             job_params = JobParams(bounds, self.custom.job_name, metadata=metadata)
+            job_params.workflow_kind = WorkflowKind.custom
 
             style_node = next(wf.find(type="ETN_KritaStyleAndPrompt"), None)
             if style_node is not None:
