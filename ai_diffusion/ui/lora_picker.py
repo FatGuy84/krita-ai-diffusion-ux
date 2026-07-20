@@ -51,6 +51,8 @@ _MULTI_TRIGGERS_NONE = "none"
 _MULTI_TRIGGERS_FIRST = "first"
 _MULTI_TRIGGERS_ALL = "all"
 _ARCH_ANY = "__any__"
+_SORT_NAME = "name"
+_SORT_DATE = "date"
 _KNOWN_ARCHES = [
     "sd15", "sdxl", "illu", "sd3", "flux", "flux_k",
     "chroma", "qwen", "anima", "zimage", "ernie", "krea2",
@@ -148,6 +150,12 @@ class LoraPickerDialog(QDialog):
         self._favorites_only = QCheckBox(_("Favorites"), self)
         self._favorites_only.toggled.connect(self._apply_filter)
 
+        sort_label = QLabel(_("Sort:"), self)
+        self._sort_combo = QComboBox(self)
+        self._sort_combo.addItem(_("Name"), _SORT_NAME)
+        self._sort_combo.addItem(_("Date Added"), _SORT_DATE)
+        self._sort_combo.currentIndexChanged.connect(self._apply_filter)
+
         size_label = QLabel(_("Size:"), self)
         self._size_slider = QSlider(Qt.Orientation.Horizontal, self)
         self._size_slider.setMinimum(_PREVIEW_SIZE_MIN)
@@ -162,6 +170,8 @@ class LoraPickerDialog(QDialog):
         row2.addWidget(tag_label)
         row2.addWidget(self._tag_combo, 1)
         row2.addWidget(self._favorites_only)
+        row2.addWidget(sort_label)
+        row2.addWidget(self._sort_combo)
         row2.addWidget(size_label)
         row2.addWidget(self._size_slider)
 
@@ -347,6 +357,10 @@ class LoraPickerDialog(QDialog):
             return True
 
         self._filtered = [l for l in self._all_loras if matches(l)]
+        if self._sort_combo.currentData() == _SORT_DATE:
+            self._filtered.sort(key=lambda l: l.modified, reverse=True)
+        else:
+            self._filtered.sort(key=lambda l: (l.display_name or l.name).lower())
         self._populate_grid()
 
     def _populate_grid(self):
@@ -392,6 +406,7 @@ class LoraPickerDialog(QDialog):
         for i in range(self._grid.count()):
             item = self._grid.item(i)
             lora: LoraInfo = item.data(Qt.ItemDataRole.UserRole)
+            item.setSizeHint(self._grid.gridSize())
             if lora.sha256 in self._preview_cache:
                 item.setIcon(self._scaled_icon(lora.sha256))
         self._schedule_visible_previews()

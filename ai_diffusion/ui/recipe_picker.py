@@ -29,6 +29,8 @@ _PREVIEW_SIZE_DEFAULT = 128
 _PREVIEW_SIZE_MIN = 64
 _PREVIEW_SIZE_MAX = 256
 _ARCH_ANY = "__any__"
+_SORT_NAME = "name"
+_SORT_DATE = "date"
 
 
 class RecipePickerDialog(QDialog):
@@ -74,6 +76,12 @@ class RecipePickerDialog(QDialog):
         self._favorites_only = QCheckBox(_("Favorites"), self)
         self._favorites_only.toggled.connect(self._apply_filter)
 
+        sort_label = QLabel(_("Sort:"), self)
+        self._sort_combo = QComboBox(self)
+        self._sort_combo.addItem(_("Name"), _SORT_NAME)
+        self._sort_combo.addItem(_("Date Added"), _SORT_DATE)
+        self._sort_combo.currentIndexChanged.connect(self._apply_filter)
+
         size_label = QLabel(_("Size:"), self)
         self._size_slider = QSlider(Qt.Orientation.Horizontal, self)
         self._size_slider.setMinimum(_PREVIEW_SIZE_MIN)
@@ -86,6 +94,8 @@ class RecipePickerDialog(QDialog):
         row2.addWidget(arch_label)
         row2.addWidget(self._arch_combo, 1)
         row2.addWidget(self._favorites_only)
+        row2.addWidget(sort_label)
+        row2.addWidget(self._sort_combo)
         row2.addWidget(size_label)
         row2.addWidget(self._size_slider)
 
@@ -209,6 +219,10 @@ class RecipePickerDialog(QDialog):
             return True
 
         self._filtered = [r for r in self._all_recipes if matches(r)]
+        if self._sort_combo.currentData() == _SORT_DATE:
+            self._filtered.sort(key=lambda r: r.created_date, reverse=True)
+        else:
+            self._filtered.sort(key=lambda r: (r.title or r.id).lower())
         self._populate_grid()
 
     def _populate_grid(self):

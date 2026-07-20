@@ -39,6 +39,7 @@ class LoraInfo:
     trigger_words: list[str] = field(default_factory=list)
     sha256: str = ""
     favorite: bool = False
+    modified: float = 0.0  # unix timestamp, file mtime - used as "date added" proxy
 
     @staticmethod
     def from_api(data: dict, base_url: str) -> LoraInfo:
@@ -66,6 +67,7 @@ class LoraInfo:
             trigger_words=trigger_words,
             favorite=bool(data.get("favorite", False)),
             sha256=sha256,
+            modified=float(data.get("modified") or 0.0),
         )
 
 
@@ -244,6 +246,7 @@ class RecipeInfo:
     preview_url: str = ""
     favorite: bool = False
     loras: list[RecipeLora] = field(default_factory=list)
+    created_date: float = 0.0  # unix timestamp
 
     @staticmethod
     def from_api(data: dict, base_url: str) -> RecipeInfo:
@@ -273,6 +276,7 @@ class RecipeInfo:
             preview_url=preview,
             favorite=bool(data.get("favorite", False)),
             loras=loras,
+            created_date=float(data.get("created_date") or data.get("modified") or 0.0),
         )
 
 
