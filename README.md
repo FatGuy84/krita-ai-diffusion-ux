@@ -65,10 +65,14 @@ if you have it installed, and falls back to a plain file-name list otherwise
 
 With Lora Manager available you get:
 * **Preview thumbnails** for every LoRA, loaded lazily as you scroll so
-  opening the browser with hundreds of LoRAs doesn't stall
+  opening the browser with hundreds of LoRAs doesn't stall — including
+  **video previews** (first frame extracted via `ffmpeg` if it's on PATH,
+  falls back to a play-icon placeholder otherwise)
 * **Search** by name, **tag filter**, and a **base-model filter**
   (SD1.5/SDXL/Illustrious/Pony/Flux/etc.)
 * **Favorites**, synced with whatever you've starred in Lora Manager itself
+* **Sort by name or date added** — a dropdown next to the filters, useful
+  for finding LoRAs you just downloaded without scrolling the whole list
 * **Trigger words** pulled from CivitAI metadata — insert them alongside the
   LoRA tag with one click, either a specific phrase group or all of them
 * **Adjustable thumbnail size** via a slider, and the whole list is cached to
@@ -82,6 +86,24 @@ A, then B, then C" batches without manually typing out the wildcard syntax.
 
 The dialog is non-modal, so Krita stays fully usable while it's open — no
 need to close it before painting or switching layers.
+
+### Recipe Browser
+
+Click the recipe icon next to the LoRA browser button to open a picker for
+[Lora Manager's Recipes](https://github.com/willmiao/ComfyUI-Lora-Manager) —
+saved prompt + LoRA-stack combinations. Same visual browser as the LoRA
+picker (previews, search, base-model filter, favorites, sort by name/date
+added), but applying a recipe fills in a whole prompt setup at once instead
+of a single LoRA:
+
+* **Add to Prompt** appends the recipe's prompt and LoRA tags to whatever
+  you already have, on a new line
+* **Replace Prompt** overwrites the current positive/negative prompt with
+  the recipe's
+* LoRAs missing from your local library are flagged (⚠) instead of silently
+  failing at generation time
+
+The dialog is non-modal, same as the LoRA browser.
 
 ### Style Picker
 
@@ -142,12 +164,19 @@ after installing new models to force a re-scan.
   live, from small (fit more on screen) to large (see detail without
   clicking through). Thumbnails are always regenerated from the
   full-resolution result, so they stay sharp at any size.
+* **Generation time** tracked per job and shown in its tooltip (wall-clock
+  from the first progress event to completion).
 * **Save to Eagle**: if you use [Eagle](https://eagle.cool) to organize
   reference images, right-click a result → "Save to Eagle" sends it straight
   into your library via Eagle's local API, with the prompt as the item
   title, full generation metadata (seed, sampler, LoRAs, etc.) as the
   annotation, and the style/LoRA names as tags — no manual export/import
   round-trip through the filesystem.
+* **Generation mode in metadata**: saved PNGs and the history tooltip now
+  record *how* an image was made — Generate, Refine, Inpaint (Fill / Add
+  Content / Remove Content / Replace Background / …), Upscale, etc. — not
+  just the prompt and sampler settings. For Generate (Custom), the
+  Seamless/Focus/Edit/Fill/Context settings used are recorded too.
 
 ### Custom workflows
 
@@ -187,6 +216,9 @@ Custom workspace's workflow dropdown in Krita.
   any custom ComfyUI graph that doesn't include a `ETN_KritaStyleAndPrompt`
   node (e.g. a plain face-swap workflow) hit an unguarded `None` access and
   threw an error on every single generation attempt. Fixed.
+* **Negative prompt couldn't be resized independently**: it was locked to a
+  single line, and its drag handle actually resized the *positive* prompt
+  field instead. The negative prompt now has its own resizable height.
 
 ## Installation
 
