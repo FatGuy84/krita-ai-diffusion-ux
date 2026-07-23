@@ -37,7 +37,7 @@ product** across the whole batch. For example:
 
 generates all 4 combinations (black+sitting, black+jumping, white+sitting,
 white+jumping) as batch items 1–4, then repeats. A button next to the batch
-count (the dice/shuffle icon) reads the prompt and sets the batch count to
+count (the "a×b" icon) reads the prompt and sets the batch count to
 the exact number of combinations for you, so you don't have to count by hand.
 
 `<lora:name:weight>` tags work inside `[[...]]` groups too, and are switched
@@ -57,7 +57,7 @@ Other batch changes:
 
 ### LoRA Browser
 
-Click the funnel icon in the prompt field to open a visual LoRA picker
+Click the **LoRA** button in the prompt field to open a visual LoRA picker
 instead of typing `<lora:...>` tags from memory or scrolling a giant
 dropdown. It talks to [ComfyUI-Lora-Manager](https://github.com/willmiao/ComfyUI-Lora-Manager)
 if you have it installed, and falls back to a plain file-name list otherwise
@@ -89,7 +89,7 @@ need to close it before painting or switching layers.
 
 ### Recipe Browser
 
-Click the recipe icon next to the LoRA browser button to open a picker for
+Click the **Recipe** button next to the LoRA browser button to open a picker for
 [Lora Manager's Recipes](https://github.com/willmiao/ComfyUI-Lora-Manager) —
 saved prompt + LoRA-stack combinations. Same visual browser as the LoRA
 picker (previews, search, base-model filter, favorites, sort by name/date
@@ -171,7 +171,8 @@ after installing new models to force a re-scan.
   into your library via Eagle's local API, with the prompt as the item
   title, full generation metadata (seed, sampler, LoRAs, etc.) as the
   annotation, and the style/LoRA names as tags — no manual export/import
-  round-trip through the filesystem.
+  round-trip through the filesystem. If you rated the image (1-5★) in
+  Krita, that rating carries over to Eagle's own star rating.
 * **Generation mode in metadata**: saved PNGs and the history tooltip now
   record *how* an image was made — Generate, Refine, Inpaint (Fill / Add
   Content / Remove Content / Replace Background / …), Upscale, etc. — not
