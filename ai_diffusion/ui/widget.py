@@ -139,7 +139,7 @@ class QueuePopup(QMenu):
         self._batch_spinbox.setVisible(supports_batch)
         self._batch_spinbox.setToolTip(_("Number of jobs to enqueue at once"))
         self._batch_combo_button = QToolButton(self)
-        self._batch_combo_button.setIcon(theme.icon("random"))
+        self._batch_combo_button.setIcon(theme.icon("combinations"))
         self._batch_combo_button.setToolTip(_("Set batch count to the number of sequential wildcard combinations in the prompt"))
         self._batch_combo_button.setVisible(supports_batch)
         self._batch_combo_button.clicked.connect(self._set_batch_from_combinations)

@@ -164,14 +164,18 @@ class ActiveRegionWidget(QFrame):
         self._no_region.setLayout(no_region_layout)
 
         self._lora_browse_button = QToolButton(self)
+        self._lora_browse_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._lora_browse_button.setIcon(theme.icon("lora"))
+        self._lora_browse_button.setText(_("LoRA"))
         self._lora_browse_button.setToolTip(_("Browse and add LoRAs"))
         self._lora_browse_button.setAutoRaise(True)
         self._lora_browse_button.clicked.connect(self._open_lora_picker)
         self._lora_dialog: LoraPickerDialog | None = None
 
         self._recipe_browse_button = QToolButton(self)
+        self._recipe_browse_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._recipe_browse_button.setIcon(theme.icon("recipe"))
+        self._recipe_browse_button.setText(_("Recipe"))
         self._recipe_browse_button.setToolTip(_("Browse and apply recipes (Lora Manager)"))
         self._recipe_browse_button.setAutoRaise(True)
         self._recipe_browse_button.clicked.connect(self._open_recipe_picker)
