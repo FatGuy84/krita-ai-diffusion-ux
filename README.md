@@ -28,6 +28,8 @@ item 2 gets `b`, item 3 gets `c`, item 4 wraps back to `a`, and so on — useful
 for systematically running through a fixed set of variations instead of
 hoping the dice land right.
 
+![Sequential wildcards, auto batch-count, and preview size](media/demo-wildcards.gif)
+
 Multiple `[[...]]` groups in the same prompt combine into a **Cartesian
 product** across the whole batch. For example:
 
@@ -44,6 +46,8 @@ the exact number of combinations for you, so you don't have to count by hand.
 correctly per batch item — each image in the batch is generated with its own
 LoRA set rather than all of them sharing whatever LoRA the first prompt
 evaluation picked (which is what happens upstream if you try this).
+
+![Two sequential wildcard groups with per-item LoRA switching and auto batch-count](media/demo-wildcards-lora-batch.gif)
 
 Other batch changes:
 * **Batch count up to 1000** (upstream caps at 10), with a spinbox you can
@@ -62,6 +66,8 @@ instead of typing `<lora:...>` tags from memory or scrolling a giant
 dropdown. It talks to [ComfyUI-Lora-Manager](https://github.com/willmiao/ComfyUI-Lora-Manager)
 if you have it installed, and falls back to a plain file-name list otherwise
 (no crash, just fewer features — no previews/tags/trigger words).
+
+![LoRA browser: multi-select, wildcard-group insert, add to prompt](media/demo-lora-browser.gif)
 
 With Lora Manager available you get:
 * **Preview thumbnails** for every LoRA, loaded lazily as you scroll so
@@ -95,6 +101,8 @@ saved prompt + LoRA-stack combinations. Same visual browser as the LoRA
 picker (previews, search, base-model filter, favorites, sort by name/date
 added), but applying a recipe fills in a whole prompt setup at once instead
 of a single LoRA:
+
+![Recipe browser: apply a saved prompt+LoRA combo, then generate](media/demo-recipe-browser.gif)
 
 * **Add to Prompt** appends the recipe's prompt and LoRA tags to whatever
   you already have, on a new line
@@ -142,8 +150,14 @@ after installing new models to force a re-scan.
   which is surprising if you only wanted one of those. Now there are four
   separate entries: Apply/Copy × raw/evaluated prompt.
 * **Search the generation history**: a search box above the history list
-  filters by prompt text live as you type (matches the raw and evaluated
-  positive/negative prompts).
+  filters by prompt text live as you type. A scope dropdown next to it
+  narrows the match to "All Prompts", "Raw Only" (the pattern you typed,
+  including wildcard syntax), or "Evaluated Only" (wildcards resolved) —
+  useful when a wildcard-resolved word matches results you didn't mean to
+  include, or vice versa.
+
+  ![Filtering history by prompt text and search scope](media/demo-filter-prompts.gif)
+
 * **Favorite / Applied filters**: two toggle buttons above the history —
   one shows only images you've starred as favorites, the other shows only
   images you've actually applied to the canvas. Combine with the search box
@@ -153,6 +167,9 @@ after installing new models to force a re-scan.
   (distinct from the existing "applied to canvas" badge in the opposite
   corner). Favorites are saved into the document and survive closing and
   reopening it.
+
+  ![Marking and filtering by favorite](media/demo-favorites.gif)
+
 * **1-5 star rating**: press `1`–`5` while a result is selected to rate it
   (pressing the same number again clears it), or right-click → "Set Rating".
   Shown as a row of yellow stars in the bottom-left corner of the thumbnail.
@@ -160,6 +177,8 @@ after installing new models to force a re-scan.
   "N and up") — useful for triaging a big batch: rate as you review, then
   filter to e.g. only 4★ results. Ratings are saved into the document like
   favorites.
+
+  ![Rating images and filtering by exact rating](media/demo-rating-filter.gif)
 * **Preview size slider**: a slider above the history resizes all thumbnails
   live, from small (fit more on screen) to large (see detail without
   clicking through). Thumbnails are always regenerated from the
@@ -173,6 +192,8 @@ after installing new models to force a re-scan.
   annotation, and the style/LoRA names as tags — no manual export/import
   round-trip through the filesystem. If you rated the image (1-5★) in
   Krita, that rating carries over to Eagle's own star rating.
+
+  ![Sending a rated image to Eagle and reviewing it there](media/demo-eagle-export.gif)
 * **Generation mode in metadata**: saved PNGs and the history tooltip now
   record *how* an image was made — Generate, Refine, Inpaint (Fill / Add
   Content / Remove Content / Replace Background / …), Upscale, etc. — not
