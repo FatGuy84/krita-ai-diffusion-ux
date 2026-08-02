@@ -59,6 +59,8 @@ Other batch changes:
   (bad prompt, disconnected server, etc.) it turns itself back off instead of
   spinning uselessly.
 
+  ![Loop Generate keeps enqueuing batches until toggled off](media/demo-loop-generate.gif)
+
 ### LoRA Browser
 
 Click the **LoRA** button in the prompt field to open a visual LoRA picker
@@ -120,6 +122,8 @@ becomes unusable — hundreds of entries in one scrolling list with no way to
 search. This fork replaces it with the same kind of searchable, non-modal
 picker dialog as the LoRA browser. Click the style name/icon button
 (where the dropdown used to be) to open it.
+
+![Style browser: search and pick from hundreds of presets](media/demo-style-browser.gif)
 
 * **Live search** by style name or checkpoint file name
 * **Base-model family filter**, including a **"Base Model Family" field**
