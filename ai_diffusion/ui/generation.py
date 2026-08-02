@@ -84,6 +84,11 @@ def _tint_image(image: Image, color: QColor) -> Image:
     return Image(qimg)
 
 
+_SEARCH_SCOPE_ALL = "all"
+_SEARCH_SCOPE_RAW = "raw"
+_SEARCH_SCOPE_EVAL = "eval"
+
+
 class HistoryWidget(QListWidget):
     _model: DocumentModel
     _connections: list[QMetaObject.Connection]
@@ -115,6 +120,7 @@ class HistoryWidget(QListWidget):
         self._model = root.active_model
         self._connections = []
         self._search_text = ""
+        self._search_scope = _SEARCH_SCOPE_ALL
         self._favorites_only = False
         self._applied_only = False
         self._rating_filter = 0
@@ -413,6 +419,10 @@ class HistoryWidget(QListWidget):
         self._search_text = text.strip().lower()
         self._apply_filter()
 
+    def set_search_scope(self, scope: str):
+        self._search_scope = scope
+        self._apply_filter()
+
     def set_thumb_size(self, value: int):
         self._thumb_size = value
         self.setIconSize(theme.screen_scale(self, QSize(value, value)))
@@ -442,11 +452,16 @@ class HistoryWidget(QListWidget):
         if self._rating_filter > 0 and job.rating(index or 0) != self._rating_filter:
             return False
         if self._search_text:
-            haystack = " ".join(
-                str(job.params.metadata.get(k, ""))
-                for k in ("prompt", "prompt_eval", "negative_prompt", "negative_prompt_eval")
-            ).lower()
-            if self._search_text not in haystack and self._search_text not in job.params.name.lower():
+            if self._search_scope == _SEARCH_SCOPE_RAW:
+                keys = ("prompt", "negative_prompt")
+            elif self._search_scope == _SEARCH_SCOPE_EVAL:
+                keys = ("prompt_eval", "negative_prompt_eval")
+            else:
+                keys = ("prompt", "prompt_eval", "negative_prompt", "negative_prompt_eval")
+            haystack = " ".join(str(job.params.metadata.get(k, "")) for k in keys).lower()
+            if self._search_scope != _SEARCH_SCOPE_RAW:
+                haystack += " " + job.params.name.lower()
+            if self._search_text not in haystack:
                 return False
         return True
 
@@ -995,6 +1010,14 @@ class GenerationWidget(QWidget):
         self.history_search.setPlaceholderText(_("Search prompts…"))
         self.history_search.setClearButtonEnabled(True)
 
+        self.history_search_scope = QComboBox(self)
+        self.history_search_scope.addItem(_("All Prompts"), _SEARCH_SCOPE_ALL)
+        self.history_search_scope.addItem(_("Raw Only"), _SEARCH_SCOPE_RAW)
+        self.history_search_scope.addItem(_("Evaluated Only"), _SEARCH_SCOPE_EVAL)
+        self.history_search_scope.setToolTip(
+            _("Search the raw prompt text, the evaluated text (wildcards resolved), or both")
+        )
+
         self.history_favorites_only = QToolButton(self)
         self.history_favorites_only.setIcon(HistoryWidget._favorite_icon.to_icon())
         self.history_favorites_only.setCheckable(True)
@@ -1013,6 +1036,7 @@ class GenerationWidget(QWidget):
 
         history_filter_layout = QHBoxLayout()
         history_filter_layout.addWidget(self.history_search, 1)
+        history_filter_layout.addWidget(self.history_search_scope)
         history_filter_layout.addWidget(self.history_favorites_only)
         history_filter_layout.addWidget(self.history_applied_only)
         history_filter_layout.addWidget(self.history_min_rating)
@@ -1032,6 +1056,9 @@ class GenerationWidget(QWidget):
         self.history = HistoryWidget(self)
         self.history.item_activated.connect(self.apply_result)
         self.history_search.textChanged.connect(self.history.set_search_filter)
+        self.history_search_scope.currentIndexChanged.connect(
+            lambda: self.history.set_search_scope(self.history_search_scope.currentData())
+        )
         self.history_favorites_only.toggled.connect(self.history.set_favorites_only)
         self.history_applied_only.toggled.connect(self.history.set_applied_only)
         self.history_min_rating.currentIndexChanged.connect(
