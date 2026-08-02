@@ -13,7 +13,6 @@ from PyQt5.QtGui import (
     QGuiApplication,
     QIcon,
     QKeyEvent,
-    QKeySequence,
     QMouseEvent,
     QPaintDevice,
     QPainter,
@@ -566,11 +565,14 @@ class TextPromptWidget(QPlainTextEdit):
 
     def event(self, e: QEvent | None):
         assert e is not None
-        # Ctrl+Backspace should be handled by QPlainTextEdit, not Krita.
+        # Krita binds a lot of single-key/Ctrl shortcuts globally (brush size
+        # [ ], opacity { }, Ctrl+Backspace for a tool, etc.), which otherwise
+        # steal keys before they ever reach this field - needed for prompt
+        # syntax like [[a|b]], {a|b}, attention weights, and normal editing.
+        # Accept every ShortcutOverride while focused so Qt delivers a plain
+        # key event here instead of firing the global action.
         if e.type() == QEvent.Type.ShortcutOverride:
-            assert isinstance(e, QKeyEvent)
-            if e.matches(QKeySequence.StandardKey.DeleteStartOfWord):
-                e.accept()
+            e.accept()
         return super().event(e)
 
     def keyPressEvent(self, e: QKeyEvent | None):
