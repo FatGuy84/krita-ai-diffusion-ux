@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -60,6 +61,7 @@ async def send_image_to_eagle(image, job: Job, index: int) -> str | None:
     metadata_text = create_img_metadata(job.params)
     image.save_png_with_metadata(filepath=path, metadata_text=metadata_text)
 
+    rating = job.rating(index)
     tags = ["krita-ai"]
     if style := job.params.metadata.get("style"):
         tags.append(str(style))
@@ -67,19 +69,24 @@ async def send_image_to_eagle(image, job: Job, index: int) -> str | None:
         if isinstance(lora, dict) and lora.get("name"):
             tags.append(Path(str(lora["name"])).stem)
 
-    item_name = job.params.name[:100] or "Krita AI generation"
+    # A marker tag to find this exact item again below (job.params.name is not
+    # unique - eg. re-running the same prompt twice - and Eagle silently
+    # renames duplicate item names on import, so matching by name is unreliable)
+    marker = f"kai-{uuid.uuid4().hex[:10]}"
+    if rating > 0:
+        tags.append(marker)
+
     payload = {
         "path": str(path),
-        "name": item_name,
+        "name": job.params.name[:100] or "Krita AI generation",
         "annotation": metadata_text,
         "tags": tags,
     }
     try:
         result = await _request_manager().post(f"{EAGLE_URL}/api/item/addFromPath", payload)
         if isinstance(result, dict) and result.get("status") == "success":
-            rating = job.rating(index)
             if rating > 0:
-                await _apply_rating(item_name, rating)
+                await _apply_rating(marker, rating)
             return None
         return _("Eagle returned an error") + f": {result}"
     except Exception as e:
@@ -87,18 +94,20 @@ async def send_image_to_eagle(image, job: Job, index: int) -> str | None:
         return _("Could not reach Eagle - is the app running?") + f" ({e})"
 
 
-async def _apply_rating(item_name: str, rating: int):
+async def _apply_rating(marker: str, rating: int):
     """addFromPath doesn't accept a star rating and doesn't return the new item's
-    id either, so poll the most recently added items for the one we just created
+    id either, so poll recently added items for the one carrying our marker tag
     and set its rating via a separate item/update call."""
     for _attempt in range(6):
         await asyncio.sleep(0.5)
         try:
             # no orderBy: default listing is already newest-first, and
             # orderBy=-CREATEDATE was observed to sort oldest-first instead
-            result = await _request_manager().get(f"{EAGLE_URL}/api/item/list?limit=10")
+            result = await _request_manager().get(
+                f"{EAGLE_URL}/api/item/list?limit=10&tags={marker}"
+            )
             items = result.get("data", []) if isinstance(result, dict) else []
-            match = next((i for i in items if i.get("name") == item_name), None)
+            match = next((i for i in items if marker in (i.get("tags") or [])), None)
             if match and match.get("id"):
                 await _request_manager().post(
                     f"{EAGLE_URL}/api/item/update", {"id": match["id"], "star": rating}
