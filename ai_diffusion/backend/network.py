@@ -9,7 +9,14 @@ from pathlib import Path
 from typing import NamedTuple
 
 from PyQt5.QtCore import QBuffer, QByteArray, QFile, QUrl
-from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest, QSslError
+from PyQt5.QtNetwork import (
+    QHttpMultiPart,
+    QHttpPart,
+    QNetworkAccessManager,
+    QNetworkReply,
+    QNetworkRequest,
+    QSslError,
+)
 
 from ..localization import translate as _
 from ..util import client_logger as log
@@ -147,6 +154,43 @@ class RequestManager:
 
     def post(self, url: str, data: dict, bearer: str | None = None):
         return self.http("POST", url, data, bearer=bearer)
+
+    def post_multipart(
+        self,
+        url: str,
+        fields: dict[str, str],
+        file_field: str,
+        file_bytes: bytes,
+        file_name: str,
+        file_mime: str = "image/png",
+        timeout: float | None = None,
+    ):
+        self._cleanup()
+        request = self._prepare_request(url, timeout)
+
+        multipart = QHttpMultiPart(QHttpMultiPart.ContentType.FormDataType)
+        for key, value in fields.items():
+            part = QHttpPart()
+            part.setRawHeader(b"Content-Disposition", f'form-data; name="{key}"'.encode("utf-8"))
+            part.setBody(value.encode("utf-8"))
+            multipart.append(part)
+
+        file_part = QHttpPart()
+        file_part.setRawHeader(b"Content-Type", file_mime.encode("utf-8"))
+        file_part.setRawHeader(
+            b"Content-Disposition",
+            f'form-data; name="{file_field}"; filename="{file_name}"'.encode("utf-8"),
+        )
+        file_part.setBody(file_bytes)
+        multipart.append(file_part)
+
+        reply = self._net.post(request, multipart)
+        assert reply is not None, f"Network request for {url} failed: reply is None"
+        multipart.setParent(reply)  # keep alive until the reply is done
+
+        future = asyncio.get_running_loop().create_future()
+        self._requests[reply] = Request(url, future)
+        return future
 
     def put(self, url: str, data: QByteArray | bytes):
         return self.http("PUT", url, data)

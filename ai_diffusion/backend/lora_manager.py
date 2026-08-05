@@ -11,6 +11,7 @@ from .. import util
 from ..util import client_logger as log
 
 if TYPE_CHECKING:
+    from ..model.jobs import JobParams
     from .network import RequestManager
 
 _STRIP_SUFFIXES = (".safetensors", ".pt", ".ckpt", ".bin")
@@ -320,3 +321,65 @@ async def fetch_preview_bytes(requests: RequestManager, preview_url: str) -> byt
     except Exception as e:
         log.warning(f"Could not fetch LoRA preview {preview_url}: {e}")
         return None
+
+
+async def save_recipe(
+    requests: RequestManager,
+    base_url: str,
+    name: str,
+    tags: list[str],
+    image_bytes: bytes,
+    params: JobParams,
+) -> str | None:
+    """Save a generated image as a Lora Manager recipe (POST /api/lm/recipes/save).
+
+    Returns an error message on failure, None on success.
+    """
+    base = base_url.rstrip("/")
+    meta = params.metadata
+
+    loras = []
+    for lora in meta.get("loras", []):
+        if isinstance(lora, dict) and lora.get("name"):
+            loras.append(
+                {"file_name": Path(str(lora["name"])).stem, "weight": float(lora.get("weight", 1.0))}
+            )
+
+    gen_params = {
+        "prompt": meta.get("prompt_final", meta.get("prompt", "")),
+        "negative_prompt": meta.get("negative_prompt_final", meta.get("negative_prompt", "")),
+        "steps": meta.get("steps", 0),
+        "sampler": meta.get("sampler", ""),
+        "cfg_scale": meta.get("guidance", 0.0),
+        "seed": params.seed,
+        "size": f"{params.bounds.width}x{params.bounds.height}",
+    }
+    strength = meta.get("strength")
+    if strength is not None and strength != 1.0:
+        gen_params["denoising_strength"] = strength
+
+    metadata_payload: dict = {"loras": loras, "gen_params": gen_params}
+    if checkpoint := meta.get("checkpoint"):
+        metadata_payload["checkpoint"] = {"file_name": checkpoint, "name": checkpoint}
+
+    fields = {
+        "name": name[:100] or "Krita AI recipe",
+        "tags": json.dumps(tags),
+        "metadata": json.dumps(metadata_payload),
+        "extension": ".png",
+    }
+    try:
+        result = await requests.post_multipart(
+            f"{base}/api/lm/recipes/save",
+            fields,
+            file_field="image",
+            file_bytes=image_bytes,
+            file_name="preview.png",
+            timeout=20.0,
+        )
+        if isinstance(result, dict) and result.get("success"):
+            return None
+        return f"Lora Manager returned an error: {result}"
+    except Exception as e:
+        log.warning(f"Could not save recipe: {e}")
+        return f"Could not reach Lora Manager: {e}"

@@ -655,6 +655,7 @@ class HistoryWidget(QListWidget):
                 rating_menu.addAction(_("Clear Rating"), self._make_rating_setter(0))
             menu.addSeparator()
             menu.addAction(_("Save to Eagle"), self._save_to_eagle)
+            menu.addAction(_("Save as Recipe"), self._save_as_recipe)
             save_action = ensure(menu.addAction(_("Save Image"), self._save_image))
             if self._model.document.filename == "":
                 tt = _(
@@ -733,6 +734,12 @@ class HistoryWidget(QListWidget):
         for item in items:
             job_id, image_index = self.item_info(item)
             self._model.send_result_to_eagle(job_id, image_index)
+
+    def _save_as_recipe(self):
+        items = self.selectedItems()
+        for item in items:
+            job_id, image_index = self.item_info(item)
+            self._model.send_result_to_recipe(job_id, image_index)
 
     def _toggle_favorite(self):
         items = self.selectedItems()

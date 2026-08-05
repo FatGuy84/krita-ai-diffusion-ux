@@ -115,6 +115,11 @@ of a single LoRA:
 
 The dialog is non-modal, same as the LoRA browser.
 
+It also works the other way round: right-click a result in the history →
+**"Save as Recipe"** sends the prompt, negative prompt, sampler settings and
+LoRA stack straight to Lora Manager as a new recipe, so a generation you
+like becomes reusable without retyping anything.
+
 ### Style Picker
 
 If you have more than a couple dozen style presets, the stock dropdown

@@ -1012,7 +1012,34 @@ class DocumentModel(QObject, ObservableProperties):
             if error:
                 self.report_error(error)
 
-        eventloop.run(_send())
+        eventloop.run(_report_errors(self, _send()))
+
+    def send_result_to_recipe(self, job_id: str, index: int):
+        from ..backend.lora_manager import save_recipe
+
+        job = self.jobs.find(job_id)
+        assert job is not None, "Cannot save recipe, invalid job id"
+        assert len(job.results) > index, "Cannot save recipe, invalid result index"
+        client = self._connection.client_if_connected
+        if client is None:
+            self.report_error(_("Not connected to a server"))
+            return
+        base_image = self._get_current_image(Bounds(0, 0, *self.document.extent))
+        base_image.draw_image(job.results[index], job.params.bounds.offset)
+
+        tags = ["krita-ai"]
+        if style := job.params.metadata.get("style"):
+            tags.append(str(style))
+
+        async def _send():
+            image_bytes = bytes(base_image.to_bytes(ImageFileFormat.png))
+            error = await save_recipe(
+                client._requests, client.url, job.params.name, tags, image_bytes, job.params
+            )
+            if error:
+                self.report_error(error)
+
+        eventloop.run(_report_errors(self, _send()))
 
     def resolve_inpaint_mode(self):
         if self.inpaint.mode is InpaintMode.automatic:
