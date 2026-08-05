@@ -6,6 +6,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 from .. import util
 from ..util import client_logger as log
@@ -323,6 +324,26 @@ async def fetch_preview_bytes(requests: RequestManager, preview_url: str) -> byt
         return None
 
 
+async def _lookup_lora_hash(requests: RequestManager, base: str, name: str) -> dict:
+    """Look up sha256/display-name for a LoRA by file name, so Lora Manager can match
+    it to its local library entry instead of showing "Not in library". We don't have
+    the hash at generation time (workflow.py only computes it for LoRAs that need
+    uploading, not ones already present on the server)."""
+    try:
+        data = await requests.get(
+            f"{base}/api/lm/loras/list?page=1&page_size=5&search={quote(name)}", timeout=8.0
+        )
+        if isinstance(data, (bytes, bytearray)):
+            data = json.loads(data)
+        items = data.get("items", []) if isinstance(data, dict) else []
+        for item in items:
+            if Path(str(item.get("file_name", ""))).stem == name:
+                return {"hash": (item.get("sha256") or "").lower(), "name": item.get("model_name", name)}
+    except Exception as e:
+        log.warning(f"Could not look up LoRA info for '{name}': {e}")
+    return {}
+
+
 async def save_recipe(
     requests: RequestManager,
     base_url: str,
@@ -341,9 +362,10 @@ async def save_recipe(
     loras = []
     for lora in meta.get("loras", []):
         if isinstance(lora, dict) and lora.get("name"):
-            loras.append(
-                {"file_name": Path(str(lora["name"])).stem, "weight": float(lora.get("weight", 1.0))}
-            )
+            clean_name = Path(str(lora["name"])).stem
+            entry = {"file_name": clean_name, "weight": float(lora.get("weight", 1.0))}
+            entry.update(await _lookup_lora_hash(requests, base, clean_name))
+            loras.append(entry)
 
     gen_params = {
         "prompt": meta.get("prompt_final", meta.get("prompt", "")),
