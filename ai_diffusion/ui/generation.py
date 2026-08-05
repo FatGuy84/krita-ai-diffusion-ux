@@ -124,6 +124,8 @@ class HistoryWidget(QListWidget):
         self._favorites_only = False
         self._applied_only = False
         self._rating_filter = 0
+        self._current_header: QListWidgetItem | None = None
+        self._collapsed_batches: set[str] = set()
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setResizeMode(QListView.Adjust)
@@ -179,6 +181,15 @@ class HistoryWidget(QListWidget):
         self.rebuild()
         self.update_selection()
 
+    def _same_batch(self, a: JobParams | None, b: JobParams) -> bool:
+        if a is None:
+            return False
+        if a.batch_id and b.batch_id:
+            # jobs from the same enqueue_jobs() call always share one batch, even
+            # if wildcards make their evaluated prompt differ per item
+            return a.batch_id == b.batch_id
+        return JobParams.equal_ignore_seed(a, b)  # fallback for pre-batch_id history
+
     def add(self, job: Job):
         if not self.is_finished(job):
             return  # Only finished diffusion/animation jobs have images to show
@@ -186,7 +197,7 @@ class HistoryWidget(QListWidget):
         scrollbar = self.verticalScrollBar()
         scroll_to_bottom = scrollbar and scrollbar.value() >= scrollbar.maximum() - 4
 
-        if not JobParams.equal_ignore_seed(self._last_job_params, job.params):
+        if not self._same_batch(self._last_job_params, job.params):
             self._last_job_params = job.params
             prompt = job.params.name if job.params.name != "" else "<no prompt>"
             strength = job.params.metadata.get("strength", 1.0)
@@ -195,10 +206,15 @@ class HistoryWidget(QListWidget):
             header = QListWidgetItem(f"{job.timestamp:%H:%M} - {strength}{prompt}")
             header.setFlags(Qt.ItemFlag.NoItemFlags)
             header.setData(Qt.ItemDataRole.UserRole, job.id)
+            header.setData(Qt.ItemDataRole.UserRole + 2, [job.id])  # ids of jobs in this batch
             header.setData(Qt.ItemDataRole.ToolTipRole, job.params.prompt)
             header.setSizeHint(QSize(9999, self.fontMetrics().lineSpacing() + 4))
             header.setTextAlignment(Qt.AlignmentFlag.AlignLeft)
             self.addItem(header)
+            self._current_header = header
+        elif self._current_header is not None:
+            group = self._current_header.data(Qt.ItemDataRole.UserRole + 2) or []
+            self._current_header.setData(Qt.ItemDataRole.UserRole + 2, [*group, job.id])
 
         if job.kind is JobKind.diffusion:
             if job.params.is_layered:
@@ -410,6 +426,8 @@ class HistoryWidget(QListWidget):
 
     def rebuild(self):
         self.clear()
+        self._current_header = None
+        self._last_job_params = None
         for job in filter(self.is_finished, self._model.jobs):
             self.add(job)
         self.scrollToBottom()
@@ -466,16 +484,25 @@ class HistoryWidget(QListWidget):
         return True
 
     def _apply_filter(self):
+        collapsed_job_ids: set[str] = set()
+        for i in range(self.count()):
+            it = ensure(self.item(i))
+            if it.flags() == Qt.ItemFlag.NoItemFlags:
+                if it.data(Qt.ItemDataRole.UserRole) in self._collapsed_batches:
+                    collapsed_job_ids.update(it.data(Qt.ItemDataRole.UserRole + 2) or [])
+
         job_has_visible: dict[str, bool] = {}
         for i in range(self.count()):
             item = ensure(self.item(i))
             if item.flags() == Qt.ItemFlag.NoItemFlags:
                 continue  # header item, handled below
             job_id, __ = self.item_info(item)
-            visible = self._item_matches_filter(item)
-            item.setHidden(not visible)
-            if visible:
+            # a batch matching the filter stays visible via its header even
+            # while collapsed - only the individual thumbnails get hidden
+            matches = self._item_matches_filter(item)
+            if matches:
                 job_has_visible[job_id] = True
+            item.setHidden(not matches or job_id in collapsed_job_ids)
         for i in range(self.count()):
             item = ensure(self.item(i))
             if item.flags() == Qt.ItemFlag.NoItemFlags:
@@ -498,6 +525,29 @@ class HistoryWidget(QListWidget):
             if clipboard := QGuiApplication.clipboard():
                 prompt = item.data(Qt.ItemDataRole.ToolTipRole)
                 clipboard.setText(prompt)
+        if item.flags() == Qt.ItemFlag.NoItemFlags:  # header - select the whole batch
+            self._select_batch(item)
+
+    def _select_batch(self, header_item: QListWidgetItem):
+        group = set(header_item.data(Qt.ItemDataRole.UserRole + 2) or [])
+        with theme.SignalBlocker(self):
+            self.clearSelection()
+            for i in range(self.count()):
+                it = ensure(self.item(i))
+                if it.flags() == Qt.ItemFlag.NoItemFlags or it.isHidden():
+                    continue
+                job_id, __ = self.item_info(it)
+                if job_id in group:
+                    it.setSelected(True)
+        self.select_item()
+
+    def _toggle_batch_collapse(self, header_item: QListWidgetItem):
+        key = header_item.data(Qt.ItemDataRole.UserRole)
+        if key in self._collapsed_batches:
+            self._collapsed_batches.discard(key)
+        else:
+            self._collapsed_batches.add(key)
+        self._apply_filter()
 
     def mousePressEvent(self, e: QMouseEvent | None):
         if (  # make single click deselect current item (usually requires Ctrl+click)
@@ -563,9 +613,19 @@ class HistoryWidget(QListWidget):
                 thumb.draw_image(self._rating_star, offset=(4 + i * (star_w - 3), y))
         return thumb.to_icon()
 
+    def _show_batch_context_menu(self, header_item: QListWidgetItem, pos: QPoint):
+        key = header_item.data(Qt.ItemDataRole.UserRole)
+        menu = QMenu(self)
+        label = _("Expand Batch") if key in self._collapsed_batches else _("Collapse Batch")
+        menu.addAction(label, lambda: self._toggle_batch_collapse(header_item))
+        menu.addAction(_("Select Batch"), lambda: self._select_batch(header_item))
+        menu.exec(self.mapToGlobal(pos))
+
     def _show_context_menu(self, pos: QPoint):
         item = self.itemAt(pos)
-        if item is not None:
+        if item is not None and item.flags() == Qt.ItemFlag.NoItemFlags:
+            self._show_batch_context_menu(item, pos)
+        elif item is not None:
             job = self._model.jobs.find(self._item_data(item).job)
             menu = QMenu(self)
             menu.addAction(_("Apply Prompt to Field"), self._apply_prompt_to_field)

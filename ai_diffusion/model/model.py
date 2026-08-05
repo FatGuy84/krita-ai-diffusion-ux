@@ -382,6 +382,7 @@ class DocumentModel(QObject, ObservableProperties):
     ):
         sampling = ensure(input.sampling)
         params.has_mask = input.images is not None and input.images.hires_mask is not None
+        params.batch_id = uuid.uuid4().hex
         queue_mode = queue_mode or self.queue_mode
 
         if queue_mode is QueueMode.replace:

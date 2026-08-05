@@ -149,6 +149,13 @@ after installing new models to force a re-scan.
 
 ### History & export
 
+* **Batch grouping**: results from one Generate click (or one Loop Generate
+  cycle) are grouped under a single header in the history, even when
+  wildcards make each image's evaluated prompt different — upstream/earlier
+  versions of this fork would otherwise split a wildcard batch into a
+  separate header per image. Click a header to select every image in that
+  batch at once (for bulk favorite/rating/delete via the context menu);
+  right-click it for **Collapse/Expand Batch** and **Select Batch**.
 * **Split prompt actions**: upstream's "Copy Prompt" context-menu action both
   copied to clipboard *and* overwrote your current prompt field in one click,
   which is surprising if you only wanted one of those. Now there are four

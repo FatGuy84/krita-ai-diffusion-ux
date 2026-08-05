@@ -63,6 +63,8 @@ class JobParams:
     frame: tuple[int, int, int] = (0, 0, 0)
     animation_id: str = ""
     resize_canvas: bool = False
+    batch_id: str = ""  # shared by all jobs from one enqueue_jobs() call, even if
+    # their evaluated prompt differs per item (eg. wildcards) - groups them in the UI
 
     @staticmethod
     def from_dict(data: dict[str, Any]):
