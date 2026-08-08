@@ -42,6 +42,7 @@ class LoraInfo:
     sha256: str = ""
     favorite: bool = False
     modified: float = 0.0  # unix timestamp, file mtime - used as "date added" proxy
+    version: str = ""  # CivitAI model version name (e.g. "v1.0")
 
     @staticmethod
     def from_api(data: dict, base_url: str) -> LoraInfo:
@@ -57,9 +58,11 @@ class LoraInfo:
         if isinstance(tags, str):
             tags = [t.strip() for t in tags.split(",") if t.strip()]
         trigger_words = []
+        version = ""
         civitai = data.get("civitai") or {}
         if isinstance(civitai, dict):
             trigger_words = civitai.get("trainedWords") or []
+            version = civitai.get("name", "") or ""
         return LoraInfo(
             name=name,
             display_name=display_name,
@@ -67,6 +70,7 @@ class LoraInfo:
             tags=tags,
             preview_url=preview,
             trigger_words=trigger_words,
+            version=version,
             favorite=bool(data.get("favorite", False)),
             sha256=sha256,
             modified=float(data.get("modified") or 0.0),
@@ -228,6 +232,68 @@ async def fetch_loras_pages(requests: RequestManager, base_url: str):
                 yield result
     except Exception as e:
         log.warning(f"Could not fetch LoRA list: {e}")
+
+
+# Lora Manager base_model string -> Krita Style "base_model_family" label.
+# Longer/more specific keys before shorter overlapping ones.
+_STYLE_FAMILY_MAP = [
+    ("illustrious", "Illustrious"),
+    ("pony", "Pony"),
+    ("sd xl", "SD XL"),
+    ("sdxl", "SD XL"),
+    ("sd 1", "SD 1.5"),
+    ("sd1", "SD 1.5"),
+    ("v1", "SD 1.5"),
+    ("sd 3", "SD 3"),
+    ("sd3", "SD 3"),
+    ("flux kontext", "Flux Kontext"),
+    ("flux", "Flux"),
+    ("chroma", "Chroma"),
+    ("qwen", "Qwen"),
+    ("anima", "Anima"),
+    ("z-image", "Z-Image"),
+    ("zimage", "Z-Image"),
+    ("ernie", "ERNIE Image"),
+    ("krea", "Krea 2"),
+]
+
+
+def style_family_for_base_model(base_model: str) -> str:
+    """Map a checkpoint's base_model string to a Krita Style base_model_family
+    label, or 'Auto' if unknown (lets the style guess from the file name)."""
+    lower = base_model.lower()
+    for key, family in _STYLE_FAMILY_MAP:
+        if key in lower:
+            return family
+    return "Auto"
+
+
+async def fetch_checkpoints_pages(requests: RequestManager, base_url: str):
+    """Yield the checkpoint list from Lora Manager incrementally, one page at a
+    time (reuses LoraInfo - same fields). Empty if Lora Manager isn't installed."""
+    base = base_url.rstrip("/")
+    try:
+        page = 1
+        page_size = 200
+        while True:
+            data = await requests.get(
+                f"{base}/api/lm/checkpoints/list?page={page}&page_size={page_size}", timeout=15.0
+            )
+            if isinstance(data, (bytes, bytearray)):
+                data = json.loads(data)
+            if not isinstance(data, dict):
+                break
+            items = data.get("items") or []
+            if not items:
+                break
+            yield [LoraInfo.from_api(item, base) for item in items]
+            total = data.get("total", page * page_size)
+            actual_page_size = data.get("page_size", page_size)
+            if page * actual_page_size >= total or len(items) < actual_page_size:
+                break
+            page += 1
+    except Exception as e:
+        log.warning(f"Could not fetch checkpoints from Lora Manager: {e}")
 
 
 @dataclass
