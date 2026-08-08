@@ -124,13 +124,23 @@ class LoraPickerDialog(QDialog):
         self._search.textChanged.connect(self._apply_filter)
 
         self._refresh_btn = QToolButton(self)
+        self._refresh_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._refresh_btn.setIcon(theme.icon("reset"))
-        self._refresh_btn.setToolTip(_("Reload LoRA list from server (bypass cache)"))
+        self._refresh_btn.setText(_("Reload list"))
+        self._refresh_btn.setToolTip(_("Reload the list from Lora Manager (fast)"))
         self._refresh_btn.clicked.connect(self._force_reload)
+
+        self._rescan_btn = QToolButton(self)
+        self._rescan_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._rescan_btn.setIcon(theme.icon("comfyui"))
+        self._rescan_btn.setText(_("Scan server"))
+        self._rescan_btn.setToolTip(_("Look for new LoRA files on the server (slow, full rescan)"))
+        self._rescan_btn.clicked.connect(self._rescan_server)
 
         row1 = QHBoxLayout()
         row1.addWidget(self._search, 1)
         row1.addWidget(self._refresh_btn)
+        row1.addWidget(self._rescan_btn)
 
         # ── row 2: base model + tag dropdowns ──
         arch_label = QLabel(_("Base Model:"), self)
@@ -294,6 +304,35 @@ class LoraPickerDialog(QDialog):
 
     def _force_reload(self):
         self._load_loras(force_refresh=True)
+
+    def _rescan_server(self):
+        # tell ComfyUI to rescan its model folders so newly added LoRA files are
+        # picked up (same as the "Look for new LoRA files" button in style settings).
+        # Slow (full model rescan), so kept separate from the fast list reload.
+        if root.connection.client_if_connected is None:
+            self._status.setText(_("Not connected to ComfyUI"))
+            return
+        self._rescan_btn.setEnabled(False)
+        self._status.setText(_("Scanning server for new LoRA files…"))
+        # connection emits models_changed when the async refresh finishes
+        root.connection.models_changed.connect(self._on_server_scanned)
+        root.connection.refresh()
+
+    def _on_server_scanned(self):
+        try:
+            root.connection.models_changed.disconnect(self._on_server_scanned)
+        except (TypeError, RuntimeError):
+            pass
+        self._rescan_btn.setEnabled(True)
+        self._load_loras(force_refresh=True)  # reload the browser list once the scan is done
+
+    def closeEvent(self, e):
+        # drop the pending scan callback so it doesn't fire on a destroyed dialog
+        try:
+            root.connection.models_changed.disconnect(self._on_server_scanned)
+        except (TypeError, RuntimeError):
+            pass
+        super().closeEvent(e)
 
     async def _fetch_progressive(self, client):
         try:
