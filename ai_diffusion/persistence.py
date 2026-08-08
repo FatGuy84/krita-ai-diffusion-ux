@@ -107,6 +107,7 @@ class _HistoryResult:
     in_use: dict[int, bool] = field(default_factory=dict)
     favorites: dict[int, bool] = field(default_factory=dict)
     ratings: dict[int, int] = field(default_factory=dict)
+    eagle: dict[int, bool] = field(default_factory=dict)
 
     @staticmethod
     def from_dict(data: dict[str, Any]):
@@ -115,6 +116,7 @@ class _HistoryResult:
         data["in_use"] = {int(k): v for k, v in data.get("in_use", {}).items()}
         data["favorites"] = {int(k): v for k, v in data.get("favorites", {}).items()}
         data["ratings"] = {int(k): v for k, v in data.get("ratings", {}).items()}
+        data["eagle"] = {int(k): v for k, v in data.get("eagle", {}).items()}
         return _HistoryResult(**data)
 
 
@@ -193,6 +195,7 @@ class ModelSync:
                 job.in_use = item.in_use
                 job.favorites = item.favorites
                 job.ratings = item.ratings
+                job.eagle = item.eagle
                 results = ImageCollection.from_bytes(images_bytes, item.offsets)
                 model.jobs.set_results(job, results)
                 model.jobs.notify_finished(job)
@@ -213,6 +216,7 @@ class ModelSync:
         model.jobs.result_used.connect(self._save_later)
         model.jobs.favorite_changed.connect(self._save_later)
         model.jobs.rating_changed.connect(self._save_later)
+        model.jobs.eagle_changed.connect(self._save_later)
         model.jobs.selection_changed.connect(self._save_later)
         self._track_regions(model.regions)
         self._track_regions(model.edit_regions)
@@ -269,6 +273,7 @@ class ModelSync:
                 job.in_use,
                 job.favorites,
                 job.ratings,
+                job.eagle,
             )
         )
         self._memory_used[slot] = image_data.size()

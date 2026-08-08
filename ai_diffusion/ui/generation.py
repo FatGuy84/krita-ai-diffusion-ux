@@ -19,6 +19,7 @@ from PyQt5.QtGui import (
     QColor,
     QGuiApplication,
     QIcon,
+    QImage,
     QKeyEvent,
     QKeySequence,
     QMouseEvent,
@@ -84,6 +85,29 @@ def _tint_image(image: Image, color: QColor) -> Image:
     return Image(qimg)
 
 
+def _make_badge(icon_name: str, disc_color: QColor, size: int = 30) -> Image:
+    """Build a prominent circular badge: a solid colored disc with a white icon
+    glyph on top, so it stays clearly visible over any thumbnail."""
+    qimg = QImage(size, size, QImage.Format.Format_ARGB32)
+    qimg.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(qimg)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(255, 255, 255))
+    painter.drawEllipse(0, 0, size - 1, size - 1)  # white outline ring
+    painter.setBrush(disc_color)
+    painter.drawEllipse(2, 2, size - 5, size - 5)
+    glyph = theme.icon(icon_name).pixmap(size - 12, size - 12).toImage()
+    gp = QPainter(glyph)
+    gp.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    gp.fillRect(glyph.rect(), QColor(255, 255, 255))
+    gp.end()
+    off = (size - glyph.width()) // 2
+    painter.drawImage(off, off, glyph)
+    painter.end()
+    return Image(qimg)
+
+
 _SEARCH_SCOPE_ALL = "all"
 _SEARCH_SCOPE_RAW = "raw"
 _SEARCH_SCOPE_EVAL = "eval"
@@ -100,6 +124,7 @@ class HistoryWidget(QListWidget):
     _applied_icon = Image.load(theme.icon_path / "star.png")
     _favorite_icon = _tint_image(_applied_icon, QColor(255, 255, 255))
     _rating_star = Image.scale(_applied_icon, Extent(14, 14))  # native yellow
+    _eagle_icon = _make_badge("upload", QColor(30, 130, 230), size=30)
     _list_css = f"""
         QListWidget {{ background-color: transparent; }}
         QListWidget::item:selected {{ border: 1px solid {theme.grey}; }}
@@ -177,6 +202,7 @@ class HistoryWidget(QListWidget):
             jobs.result_discarded.connect(self.remove_image),
             jobs.favorite_changed.connect(self.update_image_thumbnail),
             jobs.rating_changed.connect(self.update_image_thumbnail),
+            jobs.eagle_changed.connect(self.update_image_thumbnail),
         ]
         self.rebuild()
         self.update_selection()
@@ -611,6 +637,12 @@ class HistoryWidget(QListWidget):
             y = thumb.extent.height - self._rating_star.extent.height - 4
             for i in range(rating):
                 thumb.draw_image(self._rating_star, offset=(4 + i * (star_w - 3), y))
+        if job.sent_to_eagle(index):  # blue upload badge bottom-right for Eagle exports
+            badge = self._eagle_icon
+            thumb.draw_image(
+                badge,
+                offset=(thumb.extent.width - badge.extent.width - 4, thumb.extent.height - badge.extent.height - 4),
+            )
         return thumb.to_icon()
 
     def _show_batch_context_menu(self, header_item: QListWidgetItem, pos: QPoint):

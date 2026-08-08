@@ -1011,6 +1011,8 @@ class DocumentModel(QObject, ObservableProperties):
             error = await send_image_to_eagle(base_image, job, index)
             if error:
                 self.report_error(error)
+            else:
+                self.jobs.notify_sent_to_eagle(job_id, index)
 
         eventloop.run(_report_errors(self, _send()))
 

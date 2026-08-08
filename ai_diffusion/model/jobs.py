@@ -135,6 +135,7 @@ class Job:
     in_use: dict[int, bool]
     favorites: dict[int, bool]
     ratings: dict[int, int]
+    eagle: dict[int, bool]
     started_at: datetime | None
 
     def __init__(self, id: str | None, kind: JobKind, params: JobParams):
@@ -146,6 +147,7 @@ class Job:
         self.in_use = {}
         self.favorites = {}
         self.ratings = {}
+        self.eagle = {}
         self.started_at = None
 
     def result_was_used(self, index: int):
@@ -156,6 +158,9 @@ class Job:
 
     def rating(self, index: int) -> int:
         return self.ratings.get(index, 0)
+
+    def sent_to_eagle(self, index: int):
+        return self.eagle.get(index, False)
 
 
 class JobQueue(QObject):
@@ -173,6 +178,7 @@ class JobQueue(QObject):
     result_discarded = pyqtSignal(Item)
     favorite_changed = pyqtSignal(Item)
     rating_changed = pyqtSignal(Item)
+    eagle_changed = pyqtSignal(Item)
 
     def __init__(self):
         super().__init__()
@@ -254,6 +260,11 @@ class JobQueue(QObject):
         # clicking the same rating again clears it
         job.ratings[index] = 0 if job.rating(index) == rating else rating
         self.rating_changed.emit(self.Item(job_id, index))
+
+    def notify_sent_to_eagle(self, job_id: str, index: int):
+        job = ensure(self.find(job_id))
+        job.eagle[index] = True
+        self.eagle_changed.emit(self.Item(job_id, index))
 
     def select(self, job_id: str, index: int):
         self.selection = [self.Item(job_id, index)]
