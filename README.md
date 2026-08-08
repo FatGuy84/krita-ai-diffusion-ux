@@ -85,12 +85,20 @@ With Lora Manager available you get:
   LoRA tag with one click, either a specific phrase group or all of them
 * **Adjustable thumbnail size** via a slider, and the whole list is cached to
   disk so reopening the browser is instant instead of re-querying the server
+* **Reload list** (fast, re-fetches from Lora Manager) and **Scan server**
+  (slower full ComfyUI model rescan, with a progress state) buttons — so you
+  can pick up newly added LoRA files without leaving the browser
+* **Insert position**: choose whether the LoRA goes at the end of the prompt,
+  the start, or at your cursor
+* **Copy** button next to *Add to Prompt* — puts the same tags on the
+  clipboard instead of inserting them, handy for pasting elsewhere
 
 **Multi-select** (Ctrl/Shift-click) lets you pick several LoRAs at once and
-insert them as a single wildcard group — random `{a|b}` or sequential
-`[[a|b]]`, matching the wildcard syntax above — with each LoRA's trigger
-words carried along automatically. This is the fast way to set up "try LoRA
-A, then B, then C" batches without manually typing out the wildcard syntax.
+insert them together — as a **random** `{a|b}` group, a **sequential**
+`[[a|b]]` group (matching the wildcard syntax above), or **separate** tags
+(all applied at once, no wildcard) — with each LoRA's trigger words carried
+along automatically. This is the fast way to set up "try LoRA A, then B,
+then C" batches without manually typing out the wildcard syntax.
 
 The dialog is non-modal, so Krita stays fully usable while it's open — no
 need to close it before painting or switching layers.
@@ -142,6 +150,24 @@ picker dialog as the LoRA browser. Click the style name/icon button
   get pinned in their own section above the existing "Recently Used" list
   (upstream already sorts by recent use — this just adds the same idea for
   styles you always come back to, regardless of recency)
+* **Checkpoint thumbnails**: each style shows the actual preview image of its
+  checkpoint (pulled from Lora Manager, video previews included), instead of
+  just a generic architecture icon — falls back to the icon when there's no
+  preview. Toggle between a **List** and a **Grid** view.
+* **Actions on selection**: buttons to add/remove a favorite or **delete** a
+  style (user styles only, built-ins are protected), plus a Reload button.
+
+#### Create Styles from Checkpoints
+
+The **Create from Checkpoints…** button in the style picker opens a checkpoint
+browser (same visual grid as the LoRA browser — previews, search, base-model
+filter, favorites, sort) where you can **multi-select checkpoints and generate
+one style per checkpoint in a single step**. Pick an existing style as a
+**template** and every new style copies its settings (sampler, steps, etc.),
+swapping in the checkpoint. Names come from the checkpoint's title (with its
+version), and the Base Model Family is filled in automatically from Lora
+Manager's metadata. Checkpoints not present on the server are skipped with a
+note rather than creating broken styles.
 
 ### Faster startup
 

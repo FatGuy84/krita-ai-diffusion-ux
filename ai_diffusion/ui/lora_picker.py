@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 from PyQt5.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QIcon, QPainter, QPixmap
+from PyQt5.QtGui import QGuiApplication, QIcon, QPainter, QPixmap
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -47,12 +47,16 @@ _MAX_TAG_ENTRIES = 30
 _TRIGGER_ALL = "__all_triggers__"
 _FORMAT_RANDOM = "random"
 _FORMAT_SEQUENTIAL = "sequential"
+_FORMAT_SEPARATE = "separate"
 _MULTI_TRIGGERS_NONE = "none"
 _MULTI_TRIGGERS_FIRST = "first"
 _MULTI_TRIGGERS_ALL = "all"
 _ARCH_ANY = "__any__"
 _SORT_NAME = "name"
 _SORT_DATE = "date"
+_POS_END = "end"
+_POS_START = "start"
+_POS_CURSOR = "cursor"
 _KNOWN_ARCHES = [
     "sd15", "sdxl", "illu", "sd3", "flux", "flux_k",
     "chroma", "qwen", "anima", "zimage", "ernie", "krea2",
@@ -233,8 +237,12 @@ class LoraPickerDialog(QDialog):
         self._format_combo = QComboBox(self)
         self._format_combo.addItem(_("Random {a|b}"), _FORMAT_RANDOM)
         self._format_combo.addItem(_("Sequential [[a|b]]"), _FORMAT_SEQUENTIAL)
+        self._format_combo.addItem(_("Separate (all)"), _FORMAT_SEPARATE)
         self._format_combo.setToolTip(
-            _("Random: one is picked per generation. Sequential: cycles through in batch order.")
+            _(
+                "Random: one is picked per generation. Sequential: cycles through in batch order."
+                " Separate: adds all LoRAs together, no wildcard."
+            )
         )
 
         self._multi_trigger_mode = QComboBox(self)
@@ -245,9 +253,20 @@ class LoraPickerDialog(QDialog):
         self._format_combo.setVisible(False)
         self._multi_trigger_mode.setVisible(False)
 
+        self._position_combo = QComboBox(self)
+        self._position_combo.addItem(_("at End"), _POS_END)
+        self._position_combo.addItem(_("at Start"), _POS_START)
+        self._position_combo.addItem(_("at Cursor"), _POS_CURSOR)
+        self._position_combo.setToolTip(_("Where to insert the LoRA in the prompt"))
+
         self._add_btn = QPushButton(_("Add to Prompt"), self)
         self._add_btn.setEnabled(False)
         self._add_btn.clicked.connect(self._add_to_prompt)
+
+        self._copy_btn = QPushButton(_("Copy"), self)
+        self._copy_btn.setEnabled(False)
+        self._copy_btn.setToolTip(_("Copy the tags to the clipboard instead of adding to the prompt"))
+        self._copy_btn.clicked.connect(self._copy_to_clipboard)
 
         close_btn = QPushButton(_("Close"), self)
         close_btn.clicked.connect(self.close)
@@ -260,7 +279,9 @@ class LoraPickerDialog(QDialog):
         bottom_layout.addWidget(self._trigger_combo)
         bottom_layout.addWidget(self._format_combo)
         bottom_layout.addWidget(self._multi_trigger_mode)
+        bottom_layout.addWidget(self._position_combo)
         bottom_layout.addWidget(self._add_btn)
+        bottom_layout.addWidget(self._copy_btn)
         bottom_layout.addWidget(close_btn)
 
         # ── status ──
@@ -356,7 +377,9 @@ class LoraPickerDialog(QDialog):
         for lora in self._all_loras:
             for tag in lora.tags:
                 counts[tag] = counts.get(tag, 0) + 1
+        # keep the most common tags (relevance cap), then list them alphabetically
         top_tags = sorted(counts, key=lambda t: -counts[t])[:_MAX_TAG_ENTRIES]
+        top_tags.sort(key=str.lower)
 
         current = self._tag_combo.currentData()
         self._tag_combo.blockSignals(True)
@@ -532,39 +555,74 @@ class LoraPickerDialog(QDialog):
             self._selected_label.setText(_("No LoRA selected"))
             self._add_btn.setEnabled(False)
             self._trigger_combo.clear()
+        self._copy_btn.setEnabled(len(items) > 0)
 
     def _update_trigger_combo_enabled(self):
         enabled = self._include_triggers.isChecked() and self._trigger_combo.count() > 0
         self._trigger_combo.setEnabled(enabled)
 
-    def _add_to_prompt(self):
+    def _build_addition(self) -> str:
+        """Build the text (lora tags + triggers) for the current selection, in the
+        chosen format. Shared by 'Add to Prompt' and 'Copy'."""
         items = self._grid.selectedItems()
         if not items:
-            return
-        model = root.active_model
-        if model is None:
-            return
-
+            return ""
         if len(items) > 1:
-            addition = self._build_multi_lora_block(items)
+            return self._build_multi_lora_block(items)
+        lora: LoraInfo = items[0].data(Qt.ItemDataRole.UserRole)
+        strength = self._strength.value()
+        parts = [f"<lora:{lora.name}:{strength:.2f}>"]
+        if self._include_triggers.isChecked() and self._trigger_combo.currentData():
+            selected = self._trigger_combo.currentData()
+            if selected == _TRIGGER_ALL:
+                parts.append("\n----\n".join(lora.trigger_words))
+            else:
+                parts.append(selected)
+        return " ".join(parts)
+
+    def _add_to_prompt(self):
+        items = self._grid.selectedItems()
+        model = root.active_model
+        if not items or model is None:
+            return
+        addition = self._build_addition()
+        if not addition:
+            return
+        if len(items) > 1:
             self.lora_selected.emit("", self._strength.value())
         else:
             lora: LoraInfo = items[0].data(Qt.ItemDataRole.UserRole)
-            strength = self._strength.value()
-            parts = [f"<lora:{lora.name}:{strength:.2f}>"]
-            if self._include_triggers.isChecked() and self._trigger_combo.currentData():
-                selected = self._trigger_combo.currentData()
-                if selected == _TRIGGER_ALL:
-                    parts.append("\n----\n".join(lora.trigger_words))
-                else:
-                    parts.append(selected)
-            addition = " ".join(parts)
-            self.lora_selected.emit(lora.name, strength)
+            self.lora_selected.emit(lora.name, self._strength.value())
+
+        position = self._position_combo.currentData()
+        # insert at the prompt widget's cursor if possible, else fall back to end
+        if position == _POS_CURSOR and self._insert_at_cursor(addition):
+            return
 
         region = model.regions.active_or_root
         current = region.positive
-        # always add the lora on its own new line at the end of the prompt
-        region.positive = current.rstrip("\n") + "\n" + addition
+        if position == _POS_START:
+            region.positive = addition + "\n" + current.lstrip("\n")
+        else:  # end (also the cursor fallback)
+            region.positive = current.rstrip("\n") + "\n" + addition
+
+    def _insert_at_cursor(self, addition: str) -> bool:
+        # the dialog's parent is the prompt widget that owns the positive field
+        widget = getattr(self.parent(), "positive", None)
+        if widget is None or not hasattr(widget, "textCursor"):
+            return False
+        cursor = widget.textCursor()
+        cursor.insertText(addition)
+        widget.setTextCursor(cursor)
+        return True
+
+    def _copy_to_clipboard(self):
+        addition = self._build_addition()
+        if not addition:
+            return
+        if clipboard := QGuiApplication.clipboard():
+            clipboard.setText(addition)
+            self._status.setText(_("Copied to clipboard"))
 
     def _build_multi_lora_block(self, items: list[QListWidgetItem]) -> str:
         strength = self._strength.value()
@@ -580,7 +638,10 @@ class LoraPickerDialog(QDialog):
                 trigger_text = ", ".join(lora.trigger_words)
             entries.append(f"{tag} {trigger_text}".strip())
 
+        fmt = self._format_combo.currentData()
+        if fmt == _FORMAT_SEPARATE:  # all LoRAs together, no wildcard
+            return "\n".join(entries)
         joined = "|\n".join(entries)
-        if self._format_combo.currentData() == _FORMAT_SEQUENTIAL:
+        if fmt == _FORMAT_SEQUENTIAL:
             return f"[[\n{joined}\n]]"
         return f"{{\n{joined}\n}}"
