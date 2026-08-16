@@ -76,9 +76,17 @@ With Lora Manager available you get:
   opening the browser with hundreds of LoRAs doesn't stall — including
   **video previews** (first frame extracted via `ffmpeg` if it's on PATH,
   falls back to a play-icon placeholder otherwise)
-* **Search** by name, **tag filter**, and a **base-model filter**
-  (SD1.5/SDXL/Illustrious/Pony/Flux/etc.)
-* **Favorites**, synced with whatever you've starred in Lora Manager itself
+* **Search** by name, **tag filter** (alphabetical), and a **base-model
+  filter** with full names (SD 1.5 / SD XL / Illustrious / Flux Kontext /
+  Anima / etc.), matching the labels used in the style editor
+* **Favorites**, synced both ways with Lora Manager — right-click a LoRA to
+  add/remove it as a favorite from directly inside Krita, no need to switch
+  to the Lora Manager web UI
+* **Commercial-use badge**: a small $ square in the bottom-right corner of
+  each thumbnail — green if CivitAI's license allows commercial use of
+  generated images, red if it doesn't, grey if unknown. A gold ★ in the
+  top-right marks favorites. Right-click → **Open on CivitAI** jumps
+  straight to the model page.
 * **Sort by name or date added** — a dropdown next to the filters, useful
   for finding LoRAs you just downloaded without scrolling the whole list
 * **Trigger words** pulled from CivitAI metadata — insert them alongside the
@@ -153,9 +161,14 @@ picker dialog as the LoRA browser. Click the style name/icon button
 * **Checkpoint thumbnails**: each style shows the actual preview image of its
   checkpoint (pulled from Lora Manager, video previews included), instead of
   just a generic architecture icon — falls back to the icon when there's no
-  preview. Toggle between a **List** and a **Grid** view.
+  preview. Toggle between a **List** and a **Grid** view, with a size slider.
 * **Actions on selection**: buttons to add/remove a favorite or **delete** a
   style (user styles only, built-ins are protected), plus a Reload button.
+* **Generate across selected styles**: Ctrl/Shift-click several styles, set
+  a seed (or leave it random), and hit **Generate across** — runs the
+  current prompt once per style with the *same* seed, so the style is the
+  only variable and results land grouped by style in the history for an
+  easy comparison.
 
 #### Create Styles from Checkpoints
 
@@ -168,6 +181,12 @@ swapping in the checkpoint. Names come from the checkpoint's title (with its
 version), and the Base Model Family is filled in automatically from Lora
 Manager's metadata. Checkpoints not present on the server are skipped with a
 note rather than creating broken styles.
+
+The same browser also has a **Generate across** button — like the style
+sweep above, but over raw checkpoints instead of full styles, useful for a
+quick look before committing to creating styles for all of them. Since a
+raw checkpoint carries no sampler/arch settings of its own, this works best
+comparing checkpoints of the same base model family.
 
 ### Faster startup
 
@@ -283,6 +302,14 @@ Custom workspace's workflow dropdown in Krita.
 * **Negative prompt couldn't be resized independently**: it was locked to a
   single line, and its drag handle actually resized the *positive* prompt
   field instead. The negative prompt now has its own resizable height.
+* **Loop Generate button barely visible when active**: in the dark theme its
+  checked state was nearly indistinguishable from idle. It now gets a
+  highlighted background/border and a recolored icon while looping.
+* **Scrolling large LoRA/Recipe/Checkpoint/Style browsers was sluggish**:
+  the lazy preview loader scanned every item (up to ~9000 LoRAs) on every
+  scroll tick, and the style browser handed full-resolution images to the
+  list widget, which rescaled them on every repaint. Both fixed — loaders
+  now only look at what's actually visible, and thumbnails are pre-scaled.
 
 ## Installation
 
