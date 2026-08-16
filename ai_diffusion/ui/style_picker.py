@@ -17,12 +17,15 @@ from PyQt5.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QSlider,
+    QSpinBox,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from .. import eventloop
+from ..backend import workflow
 from ..backend.client import filter_supported_styles, resolve_arch
 from ..backend.lora_manager import fetch_checkpoints_pages, fetch_preview_bytes
 from ..localization import translate as _
@@ -31,7 +34,7 @@ from ..model.root import root
 from ..settings import settings
 from ..style import Style, Styles, sort_recent_styles
 from . import theme
-from .lora_picker import _extract_video_frame, _ffmpeg_path, _is_video_url
+from .lora_picker import _extract_video_frame, _ffmpeg_path, _is_video_url, _visible_range
 
 _ARCH_ANY = "__any__"
 _VIEW_LIST = "list"
@@ -82,6 +85,7 @@ class StylePickerDialog(QDialog):
         self._preview_cache: dict[str, QPixmap] = {}  # stem -> pixmap
         self._pending_previews: set[str] = set()
         self._view = _VIEW_LIST
+        self._thumb_size = 64
 
         self.setWindowTitle(_("Select Style"))
         self.setMinimumSize(420, 480)
@@ -113,6 +117,14 @@ class StylePickerDialog(QDialog):
         self._view_combo.addItem(_("Grid"), _VIEW_GRID)
         self._view_combo.currentIndexChanged.connect(self._set_view_mode)
 
+        size_label = QLabel(_("Size:"), self)
+        self._size_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self._size_slider.setMinimum(32)
+        self._size_slider.setMaximum(256)
+        self._size_slider.setValue(self._thumb_size)
+        self._size_slider.setFixedWidth(90)
+        self._size_slider.valueChanged.connect(self._on_size_changed)
+
         row1 = QHBoxLayout()
         row1.addWidget(self._search, 1)
         row1.addWidget(self._refresh_btn)
@@ -122,9 +134,12 @@ class StylePickerDialog(QDialog):
         row2.addWidget(self._arch_combo, 1)
         row2.addWidget(self._favorites_check)
         row2.addWidget(self._view_combo)
+        row2.addWidget(size_label)
+        row2.addWidget(self._size_slider)
 
         self._list = QListWidget(self)
-        self._list.setIconSize(QSize(48, 48))  # room for real checkpoint thumbnails
+        self._list.setIconSize(QSize(self._thumb_size, self._thumb_size))
+        self._list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self._list.itemActivated.connect(self._activate)
         self._list.itemSelectionChanged.connect(self._update_actions)
         self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -138,7 +153,9 @@ class StylePickerDialog(QDialog):
         if scrollbar := self._list.verticalScrollBar():
             scrollbar.valueChanged.connect(self._schedule_visible_previews)
 
-        hint = QLabel(_("Double-click to select. Right-click or F to toggle favorite."), self)
+        hint = QLabel(
+            _("Double-click to select. Ctrl/Shift-click several, then Generate across."), self
+        )
         hint.setStyleSheet(f"color: {theme.grey}; font-style: italic;")
 
         self._create_from_ckpt_btn = QPushButton(_("Create from Checkpoints…"), self)
@@ -147,6 +164,21 @@ class StylePickerDialog(QDialog):
         )
         self._create_from_ckpt_btn.clicked.connect(self._open_checkpoint_picker)
         self._checkpoint_dialog = None
+
+        seed_label = QLabel(_("Seed:"), self)
+        self._seed_input = QSpinBox(self)
+        self._seed_input.setRange(-1, 2**31 - 1)
+        self._seed_input.setValue(-1)
+        self._seed_input.setSpecialValueText(_("random"))
+        self._seed_input.setToolTip(_("Seed used for all styles (-1 = random, same for all)"))
+        self._seed_input.setFixedWidth(110)
+
+        self._generate_btn = QPushButton(_("Generate across"), self)
+        self._generate_btn.setEnabled(False)
+        self._generate_btn.setToolTip(
+            _("Run the current prompt once per selected style, same seed, to compare them")
+        )
+        self._generate_btn.clicked.connect(self._generate_across)
 
         self._favorite_btn = QPushButton(_("Favorite"), self)
         self._favorite_btn.setEnabled(False)
@@ -161,6 +193,9 @@ class StylePickerDialog(QDialog):
         bottom = QHBoxLayout()
         bottom.addWidget(self._create_from_ckpt_btn)
         bottom.addStretch(1)
+        bottom.addWidget(seed_label)
+        bottom.addWidget(self._seed_input)
+        bottom.addWidget(self._generate_btn)
         bottom.addWidget(self._favorite_btn)
         bottom.addWidget(self._delete_btn)
         bottom.addWidget(close_btn)
@@ -180,6 +215,7 @@ class StylePickerDialog(QDialog):
 
     def _set_view_mode(self):
         self._view = self._view_combo.currentData()
+        size = self._thumb_size
         if self._view == _VIEW_GRID:
             self._list.setViewMode(QListWidget.ViewMode.IconMode)
             self._list.setFlow(QListWidget.Flow.LeftToRight)
@@ -188,7 +224,7 @@ class StylePickerDialog(QDialog):
             self._list.setMovement(QListWidget.Movement.Static)
             self._list.setWordWrap(True)
             self._list.setSpacing(4)
-            self._list.setIconSize(QSize(128, 128))
+            self._list.setIconSize(QSize(size, size))
         else:
             self._list.setViewMode(QListWidget.ViewMode.ListMode)
             self._list.setFlow(QListWidget.Flow.TopToBottom)
@@ -197,8 +233,12 @@ class StylePickerDialog(QDialog):
             self._list.setMovement(QListWidget.Movement.Static)
             self._list.setWordWrap(False)
             self._list.setSpacing(0)
-            self._list.setIconSize(QSize(48, 48))
+            self._list.setIconSize(QSize(size, size))
         self._apply_filter()
+
+    def _on_size_changed(self, value: int):
+        self._thumb_size = value
+        self._set_view_mode()
 
     # ── checkpoint thumbnails from Lora Manager ──
 
@@ -211,6 +251,16 @@ class StylePickerDialog(QDialog):
 
     def _style_stem(self, style: Style) -> str:
         return Path(style.checkpoints[0]).stem if style.checkpoints else ""
+
+    def _scaled_icon(self, pixmap: QPixmap) -> QIcon:
+        # pre-scale to the icon size - handing QListWidget a full-resolution pixmap
+        # makes it rescale on every repaint, which is what killed scroll performance
+        s = self._thumb_size
+        return QIcon(
+            pixmap.scaled(
+                s, s, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            )
+        )
 
     def _load_checkpoint_previews(self):
         client = self._client()
@@ -230,25 +280,35 @@ class StylePickerDialog(QDialog):
         self._preview_timer.start()
 
     def _load_visible_previews(self):
+        # only touch items currently in the viewport - applying a cached preview is
+        # cheap, only a cache miss triggers a network fetch (one per checkpoint)
         viewport_rect = self._list.viewport().rect()
         if self._client() is None:
             return
-        for i in range(self._list.count()):
+        for i in _visible_range(self._list):  # only scan around the viewport
             item = self._list.item(i)
             if item is None or item.data(Qt.ItemDataRole.UserRole) is None:
+                continue
+            if item.data(Qt.ItemDataRole.UserRole + 2):  # preview already applied
                 continue
             if not self._list.visualItemRect(item).intersects(viewport_rect):
                 continue
             stem = item.data(Qt.ItemDataRole.UserRole + 1)
-            if not stem or stem in self._preview_cache or stem in self._pending_previews:
+            if not stem:
+                continue
+            if stem in self._preview_cache:
+                item.setIcon(self._scaled_icon(self._preview_cache[stem]))
+                item.setData(Qt.ItemDataRole.UserRole + 2, True)
+                continue
+            if stem in self._pending_previews:
                 continue
             url = self._ckpt_previews.get(stem)
             if not url or (_is_video_url(url) and _ffmpeg_path is None):
                 continue
             self._pending_previews.add(stem)
-            eventloop.run(self._load_preview(stem, url))
+            eventloop.run(self._load_preview(stem, url, item))
 
-    async def _load_preview(self, stem: str, url: str):
+    async def _load_preview(self, stem: str, url: str, item: QListWidgetItem):
         client = self._client()
         if client is None:
             return
@@ -263,10 +323,13 @@ class StylePickerDialog(QDialog):
         if pixmap.isNull():
             return
         self._preview_cache[stem] = pixmap
-        for i in range(self._list.count()):  # apply to every item using this checkpoint
-            item = self._list.item(i)
-            if item is not None and item.data(Qt.ItemDataRole.UserRole + 1) == stem:
-                item.setIcon(QIcon(pixmap))
+        # apply to the requesting item; others sharing the stem pick it up from the
+        # cache when they next scroll into view (see _load_visible_previews)
+        try:
+            item.setIcon(self._scaled_icon(pixmap))
+            item.setData(Qt.ItemDataRole.UserRole + 2, True)
+        except RuntimeError:
+            pass  # item was removed (list rebuilt) before the fetch finished
 
     def _open_checkpoint_picker(self):
         from .checkpoint_picker import CheckpointPickerDialog
@@ -372,8 +435,10 @@ class StylePickerDialog(QDialog):
                 self._list.addItem(header)
 
             stem = self._style_stem(style)
+            applied = False
             if stem in self._preview_cache:  # real checkpoint thumbnail if we have it
-                icon = QIcon(self._preview_cache[stem])
+                icon = self._scaled_icon(self._preview_cache[stem])
+                applied = True
             else:
                 icon = theme.checkpoint_icon(arch, client=client)
                 if is_fav:
@@ -381,8 +446,9 @@ class StylePickerDialog(QDialog):
             item = QListWidgetItem(icon, style.name)
             item.setData(Qt.ItemDataRole.UserRole, style.filename)
             item.setData(Qt.ItemDataRole.UserRole + 1, stem)
+            item.setData(Qt.ItemDataRole.UserRole + 2, applied)
             if self._view == _VIEW_GRID:
-                item.setSizeHint(QSize(128 + 16, 128 + 40))
+                item.setSizeHint(QSize(self._thumb_size + 16, self._thumb_size + 40))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
             if style == self._current:
                 item.setSelected(True)
@@ -406,13 +472,40 @@ class StylePickerDialog(QDialog):
         filename = items[0].data(Qt.ItemDataRole.UserRole)
         return Styles.list().find(filename) if filename else None
 
+    def _selected_styles(self) -> list[Style]:
+        result = []
+        for item in self._list.selectedItems():
+            filename = item.data(Qt.ItemDataRole.UserRole)
+            if filename and (style := Styles.list().find(filename)):
+                result.append(style)
+        return result
+
+    def _generate_across(self):
+        styles = self._selected_styles()
+        model = root.active_model
+        if not styles or model is None:
+            return
+        original = model.style
+        seed = self._seed_input.value()
+        if seed < 0:
+            seed = workflow.generate_seed()
+
+        def use(style):
+            return lambda: setattr(model, "style", style)
+
+        model.generate_across(
+            [use(s) for s in styles], seed, restore=lambda: setattr(model, "style", original)
+        )
+
     def _is_builtin(self, style: Style) -> bool:
         return style.filename.startswith("built-in/")
 
     def _update_actions(self):
-        style = self._selected_style()
+        selected = self._selected_styles()
+        style = selected[0] if selected else None
         self._favorite_btn.setEnabled(style is not None)
         self._delete_btn.setEnabled(style is not None and not self._is_builtin(style))
+        self._generate_btn.setEnabled(bool(selected) and root.active_model is not None)
         if style is not None:
             self._favorite_btn.setText(
                 _("Remove Favorite") if self._is_favorite(style) else _("Add Favorite")

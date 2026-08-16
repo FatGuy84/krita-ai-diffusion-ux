@@ -18,12 +18,14 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSlider,
+    QSpinBox,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from .. import eventloop
+from ..backend import workflow
 from ..backend.lora_manager import (
     LoraInfo,
     fetch_checkpoints_pages,
@@ -34,7 +36,7 @@ from ..localization import translate as _
 from ..model.root import root
 from ..style import Styles
 from . import theme
-from .lora_picker import _extract_video_frame, _ffmpeg_path, _is_video_url
+from .lora_picker import _extract_video_frame, _ffmpeg_path, _is_video_url, _visible_range
 
 _PREVIEW_SIZE_DEFAULT = 128
 _PREVIEW_SIZE_MIN = 64
@@ -141,6 +143,24 @@ class CheckpointPickerDialog(QDialog):
         self._selected_label = QLabel(_("No checkpoint selected"), self)
         self._selected_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
+        seed_label = QLabel(_("Seed:"), self)
+        self._seed_input = QSpinBox(self)
+        self._seed_input.setRange(-1, 2**31 - 1)
+        self._seed_input.setValue(-1)
+        self._seed_input.setSpecialValueText(_("random"))  # -1 shows "random"
+        self._seed_input.setToolTip(_("Seed used for all checkpoints (-1 = random, same for all)"))
+        self._seed_input.setFixedWidth(110)
+
+        self._generate_btn = QPushButton(_("Generate across"), self)
+        self._generate_btn.setEnabled(False)
+        self._generate_btn.setToolTip(
+            _(
+                "Run the current prompt/settings once per selected checkpoint, same seed,"
+                " so you can compare them side by side in the history"
+            )
+        )
+        self._generate_btn.clicked.connect(self._generate_across)
+
         self._create_btn = QPushButton(_("Create Styles"), self)
         self._create_btn.setEnabled(False)
         self._create_btn.clicked.connect(self._create_styles)
@@ -152,6 +172,9 @@ class CheckpointPickerDialog(QDialog):
         bottom.addWidget(self._selected_label, 1)
         bottom.addWidget(template_label)
         bottom.addWidget(self._template_combo)
+        bottom.addWidget(seed_label)
+        bottom.addWidget(self._seed_input)
+        bottom.addWidget(self._generate_btn)
         bottom.addWidget(self._create_btn)
         bottom.addWidget(close_btn)
 
@@ -309,7 +332,7 @@ class CheckpointPickerDialog(QDialog):
         client = root.connection.client_if_connected
         if client is None:
             return
-        for i in range(self._grid.count()):
+        for i in _visible_range(self._grid):  # only scan around the viewport
             item = self._grid.item(i)
             if not self._grid.visualItemRect(item).intersects(viewport_rect):
                 continue
@@ -350,6 +373,7 @@ class CheckpointPickerDialog(QDialog):
     def _on_selection_changed(self):
         items = self._grid.selectedItems()
         self._create_btn.setEnabled(len(items) > 0)
+        self._generate_btn.setEnabled(len(items) > 0 and root.active_model is not None)
         if not items:
             self._selected_label.setText(_("No checkpoint selected"))
         else:
@@ -400,6 +424,49 @@ class CheckpointPickerDialog(QDialog):
 
         self.styles_created.emit(created)
         msg = _("Created {n} styles").format(n=created)
+        if skipped:
+            msg += "  " + _("(skipped, not on server: {names})").format(names=", ".join(skipped))
+        self._status.setText(msg)
+
+    def _generate_across(self):
+        items = self._grid.selectedItems()
+        model = root.active_model
+        if not items or model is None:
+            return
+        client = root.connection.client_if_connected
+        server_ckpts = client.models.checkpoints if client else {}
+        stem_to_id = {Path(k).stem: k for k in server_ckpts}
+
+        ids: list[str] = []
+        skipped: list[str] = []
+        for item in items:
+            c: LoraInfo = item.data(Qt.ItemDataRole.UserRole)
+            identifier = stem_to_id.get(c.name)
+            if identifier is not None:
+                ids.append(identifier)
+            else:
+                skipped.append(c.display_name or c.name)
+        if not ids:
+            self._status.setText(_("None of the selected checkpoints are on the server"))
+            return
+
+        style = model.style
+        original_ckpts = list(style.checkpoints)
+        # -1 in the seed box means "pick a random one and reuse it for all"
+        seed = self._seed_input.value()
+        if seed < 0:
+            seed = workflow.generate_seed()
+
+        def set_checkpoint(identifier):
+            return lambda: setattr(style, "checkpoints", [identifier])
+
+        model.generate_across(
+            [set_checkpoint(i) for i in ids],
+            seed,
+            restore=lambda: setattr(style, "checkpoints", original_ckpts),
+        )
+
+        msg = _("Queued {n} checkpoints (seed {s})").format(n=len(ids), s=seed)
         if skipped:
             msg += "  " + _("(skipped, not on server: {names})").format(names=", ".join(skipped))
         self._status.setText(msg)

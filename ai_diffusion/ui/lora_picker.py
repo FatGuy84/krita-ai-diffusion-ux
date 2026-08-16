@@ -6,8 +6,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from PyQt5.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QGuiApplication, QIcon, QPainter, QPixmap
+from PyQt5.QtCore import QRect, QSize, Qt, QTimer, QUrl, pyqtSignal
+from PyQt5.QtGui import QColor, QDesktopServices, QGuiApplication, QIcon, QPainter, QPixmap
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -30,10 +31,12 @@ from .. import eventloop
 from ..backend.lora_manager import (
     LoraInfo,
     arch_for_base_model,
+    fetch_commercial_use,
     fetch_loras_pages,
     fetch_preview_bytes,
     load_cached_loras,
     save_lora_cache,
+    set_favorite,
 )
 from ..localization import translate as _
 from ..model.root import root
@@ -61,6 +64,21 @@ _KNOWN_ARCHES = [
     "sd15", "sdxl", "illu", "sd3", "flux", "flux_k",
     "chroma", "qwen", "anima", "zimage", "ernie", "krea2",
 ]
+# full names for the base-model filter, matching the labels in the style editor
+_ARCH_LABELS = {
+    "sd15": "SD 1.5",
+    "sdxl": "SD XL",
+    "illu": "Illustrious",
+    "sd3": "SD 3",
+    "flux": "Flux",
+    "flux_k": "Flux Kontext",
+    "chroma": "Chroma",
+    "qwen": "Qwen",
+    "anima": "Anima",
+    "zimage": "Z-Image",
+    "ernie": "ERNIE Image",
+    "krea2": "Krea 2",
+}
 _VIDEO_EXTENSIONS = (".mp4", ".webm", ".mov")
 
 
@@ -69,6 +87,60 @@ def _is_video_url(url: str) -> bool:
     # so check the whole url rather than stripping the query string
     lower = url.lower()
     return any(lower.endswith(ext) for ext in _VIDEO_EXTENSIONS)
+
+
+_COMMERCIAL_COLORS = {"yes": QColor(60, 170, 75), "no": QColor(205, 60, 55)}
+
+
+def _with_badges(pixmap: QPixmap, favorite: bool, commercial: str) -> QPixmap:
+    """Overlay a favorite star (top-right) and a commercial-use $ square (bottom-right):
+    green = commercial image use allowed, red = not allowed, grey = unknown."""
+    result = QPixmap(pixmap)
+    painter = QPainter(result)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    w, h = result.width(), result.height()
+    b = max(12, w // 6)
+
+    # commercial-use square, bottom-right
+    x, y = w - b - 2, h - b - 2
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(_COMMERCIAL_COLORS.get(commercial, QColor(110, 110, 110)))
+    painter.drawRoundedRect(x, y, b, b, 3, 3)
+    painter.setPen(QColor(255, 255, 255))
+    font = painter.font()
+    font.setBold(True)
+    font.setPixelSize(max(8, int(b * 0.75)))
+    painter.setFont(font)
+    painter.drawText(QRect(x, y, b, b), Qt.AlignmentFlag.AlignCenter, "$")
+
+    # favorite star, top-right
+    if favorite:
+        sb = max(14, w // 5)
+        star_font = painter.font()
+        star_font.setPixelSize(sb)
+        painter.setFont(star_font)
+        rect = QRect(w - sb - 2, 0, sb, sb + 2)
+        painter.setPen(QColor(0, 0, 0, 160))  # subtle outline for contrast
+        painter.drawText(rect.translated(1, 1), Qt.AlignmentFlag.AlignCenter, "★")
+        painter.setPen(QColor(240, 200, 60))
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "★")
+
+    painter.end()
+    return result
+
+
+def _visible_range(grid, overscan: int = 24) -> range:
+    """Indices of items in/near the viewport. Lazy preview loaders use this so they
+    don't call visualItemRect on every item (thousands) on each scroll tick."""
+    count = grid.count()
+    if count == 0:
+        return range(0)
+    vp = grid.viewport().rect()
+    first = grid.indexAt(vp.topLeft())
+    last = grid.indexAt(vp.bottomRight())
+    start = first.row() if first.isValid() else 0
+    end = last.row() if last.isValid() else start + 200  # empty space below last row
+    return range(max(0, start - overscan), min(count, end + overscan + 1))
 
 
 _ffmpeg_path = shutil.which("ffmpeg")
@@ -112,6 +184,7 @@ class LoraPickerDialog(QDialog):
         self._filtered: list[LoraInfo] = []
         self._preview_cache: dict[str, QPixmap] = {}  # original, unscaled
         self._pending_previews: set[str] = set()
+        self._pending_commercial: set[str] = set()
         self._loading = False
         self._preview_size = _PREVIEW_SIZE_DEFAULT
 
@@ -150,8 +223,8 @@ class LoraPickerDialog(QDialog):
         arch_label = QLabel(_("Base Model:"), self)
         self._arch_combo = QComboBox(self)
         self._arch_combo.addItem(_("Any"), _ARCH_ANY)
-        for arch in sorted(_KNOWN_ARCHES):
-            self._arch_combo.addItem(arch, arch)
+        for arch in sorted(_KNOWN_ARCHES, key=lambda a: _ARCH_LABELS.get(a, a)):
+            self._arch_combo.addItem(_ARCH_LABELS.get(arch, arch), arch)
         idx = self._arch_combo.findData(current_arch)
         self._arch_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._arch_combo.currentIndexChanged.connect(self._apply_filter)
@@ -200,6 +273,8 @@ class LoraPickerDialog(QDialog):
         self._grid.setWordWrap(True)
         self._grid.setSpacing(4)
         self._grid.itemSelectionChanged.connect(self._on_selection_changed)
+        self._grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._grid.customContextMenuRequested.connect(self._show_context_menu)
 
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
@@ -442,24 +517,27 @@ class LoraPickerDialog(QDialog):
                 f"{fav}{lora.display_name}\nFile: {lora.name}\nBase: {lora.base_model or '?'}\n"
                 + (f"Triggers: {' | '.join(lora.trigger_words)}" if lora.trigger_words else "")
             )
-            if lora.sha256 in self._preview_cache:
-                item.setIcon(self._scaled_icon(lora.sha256))
-            elif lora.preview_url and _is_video_url(lora.preview_url):
-                item.setIcon(theme.icon("play"))
+            self._set_tile_icon(item, lora)
             self._grid.addItem(item)
         if not self._loading:
             self._status.setText(f"{len(self._filtered)} / {len(self._all_loras)} LoRAs")
         self._schedule_visible_previews()
 
-    def _scaled_icon(self, sha256: str) -> QIcon:
-        pixmap = self._preview_cache[sha256]
-        scaled = pixmap.scaled(
-            self._preview_size,
-            self._preview_size,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        return QIcon(scaled)
+    def _tile_base(self, lora: LoraInfo) -> QPixmap:
+        size = self._preview_size
+        if lora.sha256 in self._preview_cache:
+            return self._preview_cache[lora.sha256].scaled(
+                size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            )
+        if lora.preview_url and _is_video_url(lora.preview_url):
+            return theme.icon("play").pixmap(size, size)
+        blank = QPixmap(size, size)
+        blank.fill(Qt.GlobalColor.transparent)
+        return blank
+
+    def _set_tile_icon(self, item: QListWidgetItem, lora: LoraInfo):
+        # preview (or placeholder) with favorite star + commercial-use badge on top
+        item.setIcon(QIcon(_with_badges(self._tile_base(lora), lora.favorite, lora.commercial)))
 
     def _on_preview_size_changed(self, value: int):
         self._preview_size = value
@@ -469,8 +547,7 @@ class LoraPickerDialog(QDialog):
             item = self._grid.item(i)
             lora: LoraInfo = item.data(Qt.ItemDataRole.UserRole)
             item.setSizeHint(self._grid.gridSize())
-            if lora.sha256 in self._preview_cache:
-                item.setIcon(self._scaled_icon(lora.sha256))
+            self._set_tile_icon(item, lora)
         self._schedule_visible_previews()
 
     # ── lazy preview loading (only visible items) ──
@@ -483,12 +560,18 @@ class LoraPickerDialog(QDialog):
         client = root.connection.client_if_connected
         if client is None:
             return
-        for i in range(self._grid.count()):
+        # only scan around the viewport - iterating all items (up to thousands of
+        # LoRAs) with visualItemRect on every scroll tick is what made it lag
+        for i in _visible_range(self._grid):
             item = self._grid.item(i)
             rect = self._grid.visualItemRect(item)
             if not rect.intersects(viewport_rect):
                 continue
             lora: LoraInfo = item.data(Qt.ItemDataRole.UserRole)
+            # commercial-use badge (lazy, per-model metadata call)
+            if lora.commercial == "" and lora.file_path and lora.sha256 not in self._pending_commercial:
+                self._pending_commercial.add(lora.sha256)
+                eventloop.run(self._load_commercial(lora, item))
             if not lora.preview_url or lora.sha256 in self._preview_cache:
                 continue
             if _is_video_url(lora.preview_url) and _ffmpeg_path is None:
@@ -497,6 +580,17 @@ class LoraPickerDialog(QDialog):
                 continue
             self._pending_previews.add(lora.sha256)
             eventloop.run(self._load_preview(lora, item))
+
+    async def _load_commercial(self, lora: LoraInfo, item: QListWidgetItem):
+        client = root.connection.client_if_connected
+        if client is None:
+            return
+        result = await fetch_commercial_use(client._requests, client.url, lora.file_path)
+        lora.commercial = result or "unknown"  # "unknown" = fetched but no info (avoid refetch)
+        try:
+            self._set_tile_icon(item, lora)
+        except RuntimeError:
+            pass  # item removed before the fetch finished
 
     async def _load_preview(self, lora: LoraInfo, item: QListWidgetItem):
         client = root.connection.client_if_connected
@@ -518,10 +612,41 @@ class LoraPickerDialog(QDialog):
                     painter.drawPixmap(pixmap.width() - 28, pixmap.height() - 28, badge)
                     painter.end()
                 self._preview_cache[lora.sha256] = pixmap
-                item.setIcon(self._scaled_icon(lora.sha256))
+                self._set_tile_icon(item, lora)
             else:
                 # format not decodable by Qt (e.g. some animated webp builds) - placeholder
                 item.setIcon(theme.icon("filter"))
+
+    # ── context menu / favorites ──
+
+    def _show_context_menu(self, pos):
+        item = self._grid.itemAt(pos)
+        if item is None:
+            return
+        lora: LoraInfo = item.data(Qt.ItemDataRole.UserRole)
+        menu = QMenu(self)
+        label = _("Remove from Favorites") if lora.favorite else _("Add to Favorites")
+        menu.addAction(label, lambda: self._toggle_favorite(lora, item))
+        if lora.civitai_model_id:
+            menu.addAction(_("Open on CivitAI"), lambda: self._open_civitai(lora))
+        menu.exec(self._grid.mapToGlobal(pos))
+
+    def _open_civitai(self, lora: LoraInfo):
+        QDesktopServices.openUrl(QUrl(f"https://civitai.com/models/{lora.civitai_model_id}"))
+
+    def _toggle_favorite(self, lora: LoraInfo, item: QListWidgetItem):
+        client = root.connection.client_if_connected
+        if client is None:
+            return
+
+        async def _apply():
+            new_value = not lora.favorite
+            if await set_favorite(client._requests, client.url, lora.file_path, new_value):
+                lora.favorite = new_value
+                save_lora_cache(client.url, self._all_loras)
+                self._apply_filter()  # refresh tooltip/star and the favorites filter
+
+        eventloop.run(_apply())
 
     # ── selection / insertion ──
 

@@ -218,6 +218,25 @@ class DocumentModel(QObject, ObservableProperties):
     def generate(self):
         self._generate(self.queue_mode)
 
+    def generate_across(self, apply_each: list, seed: int, restore):
+        """Run the current prompt/settings once per configuration, all with the same
+        seed so the config is the only variable (used for style/checkpoint sweeps).
+        `apply_each` is a list of callables, each mutating the setup before a generate;
+        `restore` puts the mutated state back afterwards."""
+        original_fixed, original_seed = self.fixed_seed, self.seed
+        self.fixed_seed = True
+        self.seed = seed
+        try:
+            for apply in apply_each:
+                apply()
+                # generate() reads the config synchronously before enqueuing, so
+                # mutating it between calls queues one batch per configuration
+                self.generate()
+        finally:
+            restore()
+            self.fixed_seed = original_fixed
+            self.seed = original_seed
+
     def generate_replace(self):
         self._generate(QueueMode.replace)
 

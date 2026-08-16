@@ -85,6 +85,16 @@ def _tint_image(image: Image, color: QColor) -> Image:
     return Image(qimg)
 
 
+def _tint_icon(name: str, color: QColor, size: int = 32) -> QIcon:
+    """A themed icon recolored to `color` (e.g. to highlight an active button)."""
+    pixmap = theme.icon(name).pixmap(size, size)
+    painter = QPainter(pixmap)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    painter.fillRect(pixmap.rect(), color)
+    painter.end()
+    return QIcon(pixmap)
+
+
 def _make_badge(icon_name: str, disc_color: QColor, size: int = 30) -> Image:
     """Build a prominent circular badge: a solid colored disc with a white icon
     glyph on top, so it stays clearly visible over any thumbnail."""
@@ -1086,11 +1096,21 @@ class GenerationWidget(QWidget):
         self.queue_button.setFixedHeight(self.generate_button.height() - 2)
 
         self.loop_button = QToolButton(self)
-        self.loop_button.setIcon(theme.icon("reset"))
+        self._loop_icon = theme.icon("reset")
+        self._loop_icon_active = _tint_icon("reset", QColor(theme.strong_highlight))
+        self.loop_button.setIcon(self._loop_icon)
         self.loop_button.setCheckable(True)
         self.loop_button.setFixedHeight(self.generate_button.height() - 2)
         self.loop_button.setToolTip(
             _("Generate continuously until stopped - click again to stop")
+        )
+        # make the active state clearly visible (barely showed in the dark theme)
+        self.loop_button.setStyleSheet(
+            f"QToolButton:checked {{ background-color: {theme.active};"
+            f" border: 1px solid {theme.strong_highlight}; border-radius: 3px; }}"
+        )
+        self.loop_button.toggled.connect(
+            lambda on: self.loop_button.setIcon(self._loop_icon_active if on else self._loop_icon)
         )
 
         actions_layout = QHBoxLayout()

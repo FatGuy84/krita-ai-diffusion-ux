@@ -19,7 +19,7 @@ _STRIP_SUFFIXES = (".safetensors", ".pt", ".ckpt", ".bin")
 _CACHE_MAX_AGE = 6 * 3600  # seconds
 # Bump when the cached data shape/semantics change, to invalidate old caches
 # written before a fix (e.g. the favorite flag used to always be False).
-_CACHE_VERSION = 2
+_CACHE_VERSION = 4
 
 
 def _clean_name(file_name: str) -> str:
@@ -43,6 +43,9 @@ class LoraInfo:
     favorite: bool = False
     modified: float = 0.0  # unix timestamp, file mtime - used as "date added" proxy
     version: str = ""  # CivitAI model version name (e.g. "v1.0")
+    file_path: str = ""  # full path on the server, needed to query per-model metadata
+    commercial: str = ""  # "", "yes" or "no" - filled in lazily (see fetch_commercial_use)
+    civitai_model_id: int = 0  # 0 if not from CivitAI
 
     @staticmethod
     def from_api(data: dict, base_url: str) -> LoraInfo:
@@ -59,10 +62,12 @@ class LoraInfo:
             tags = [t.strip() for t in tags.split(",") if t.strip()]
         trigger_words = []
         version = ""
+        civitai_model_id = 0
         civitai = data.get("civitai") or {}
         if isinstance(civitai, dict):
             trigger_words = civitai.get("trainedWords") or []
             version = civitai.get("name", "") or ""
+            civitai_model_id = civitai.get("modelId") or 0
         return LoraInfo(
             name=name,
             display_name=display_name,
@@ -71,9 +76,11 @@ class LoraInfo:
             preview_url=preview,
             trigger_words=trigger_words,
             version=version,
+            civitai_model_id=civitai_model_id,
             favorite=bool(data.get("favorite", False)),
             sha256=sha256,
             modified=float(data.get("modified") or 0.0),
+            file_path=data.get("file_path", "") or "",
         )
 
 
@@ -408,6 +415,51 @@ async def _lookup_lora_hash(requests: RequestManager, base: str, name: str) -> d
     except Exception as e:
         log.warning(f"Could not look up LoRA info for '{name}': {e}")
     return {}
+
+
+async def set_favorite(
+    requests: RequestManager, base_url: str, file_path: str, favorite: bool
+) -> bool:
+    """Toggle a LoRA's favorite flag in Lora Manager. Returns True on success."""
+    if not file_path:
+        return False
+    base = base_url.rstrip("/")
+    try:
+        result = await requests.post(
+            f"{base}/api/lm/loras/save-metadata", {"file_path": file_path, "favorite": favorite}
+        )
+        return isinstance(result, dict) and bool(result.get("success"))
+    except Exception as e:
+        log.warning(f"Could not set favorite for '{file_path}': {e}")
+        return False
+
+
+async def fetch_commercial_use(requests: RequestManager, base_url: str, file_path: str) -> str:
+    """Return "yes"/"no"/"" (unknown) for whether the model's CivitAI license allows
+    commercial use of generated images. Reads per-model metadata (not in the list)."""
+    if not file_path:
+        return ""
+    base = base_url.rstrip("/")
+    try:
+        data = await requests.get(
+            f"{base}/api/lm/loras/metadata?file_path={quote(file_path)}", timeout=8.0
+        )
+        if isinstance(data, (bytes, bytearray)):
+            data = json.loads(data)
+        model = ((data or {}).get("metadata") or {}).get("model") or {}
+        allow = model.get("allowCommercialUse")
+        if allow is None:
+            return ""
+        if isinstance(allow, str):
+            allow = [allow]
+        # CivitAI values: None / Image / Rent / RentCivit / Sell. Image or Sell means
+        # generated images may be used commercially.
+        if any(v in ("Image", "Sell") for v in allow):
+            return "yes"
+        return "no"  # known, but images not permitted
+    except Exception as e:
+        log.warning(f"Could not fetch commercial-use info for '{file_path}': {e}")
+        return ""
 
 
 async def save_recipe(

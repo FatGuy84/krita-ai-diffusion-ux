@@ -24,6 +24,7 @@ from ..backend.lora_manager import RecipeInfo, fetch_preview_bytes, fetch_recipe
 from ..localization import translate as _
 from ..model.root import root
 from . import theme
+from .lora_picker import _visible_range
 
 _PREVIEW_SIZE_DEFAULT = 128
 _PREVIEW_SIZE_MIN = 64
@@ -280,7 +281,7 @@ class RecipePickerDialog(QDialog):
         client = root.connection.client_if_connected
         if client is None:
             return
-        for i in range(self._grid.count()):
+        for i in _visible_range(self._grid):  # only scan around the viewport
             item = self._grid.item(i)
             rect = self._grid.visualItemRect(item)
             if not rect.intersects(viewport_rect):
