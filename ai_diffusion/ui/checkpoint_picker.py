@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from PyQt5.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QIcon, QPainter, QPixmap
+from PyQt5.QtCore import QRect, QSize, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor, QIcon, QPainter, QPixmap
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -36,7 +36,27 @@ from ..localization import translate as _
 from ..model.root import root
 from ..style import Styles
 from . import theme
-from .lora_picker import _extract_video_frame, _ffmpeg_path, _is_video_url, _visible_range
+from .lora_picker import _extract_video_frame, _ffmpeg_path, _is_video_url, _visible_range, _with_tag
+
+def _with_style_badge(pixmap: QPixmap) -> QPixmap:
+    """Small green checkmark, top-left: a style already exists for this checkpoint."""
+    result = QPixmap(pixmap)
+    painter = QPainter(result)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    b = max(14, result.width() // 6)
+    x, y = 2, 2
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(60, 170, 75))
+    painter.drawRoundedRect(x, y, b, b, 3, 3)
+    painter.setPen(QColor(255, 255, 255))
+    font = painter.font()
+    font.setBold(True)
+    font.setPixelSize(max(9, int(b * 0.75)))
+    painter.setFont(font)
+    painter.drawText(QRect(x, y, b, b), Qt.AlignmentFlag.AlignCenter, "✓")
+    painter.end()
+    return result
+
 
 _PREVIEW_SIZE_DEFAULT = 128
 _PREVIEW_SIZE_MIN = 64
@@ -91,6 +111,10 @@ class CheckpointPickerDialog(QDialog):
         self._favorites_only = QCheckBox(_("Favorites"), self)
         self._favorites_only.toggled.connect(self._apply_filter)
 
+        self._hide_styled = QCheckBox(_("Hide checkpoints with a style"), self)
+        self._hide_styled.setToolTip(_("Hide checkpoints that already have a style created for them"))
+        self._hide_styled.toggled.connect(self._apply_filter)
+
         sort_label = QLabel(_("Sort:"), self)
         self._sort_combo = QComboBox(self)
         self._sort_combo.addItem(_("Name"), _SORT_NAME)
@@ -109,6 +133,7 @@ class CheckpointPickerDialog(QDialog):
         row2.addWidget(base_label)
         row2.addWidget(self._base_combo, 1)
         row2.addWidget(self._favorites_only)
+        row2.addWidget(self._hide_styled)
         row2.addWidget(sort_label)
         row2.addWidget(self._sort_combo)
         row2.addWidget(size_label)
@@ -257,9 +282,13 @@ class CheckpointPickerDialog(QDialog):
         base = self._base_combo.currentData()
         base = "" if base in (None, _BASE_ANY) else base
         favorites_only = self._favorites_only.isChecked()
+        hide_styled = self._hide_styled.isChecked()
+        has_style = self._styled_stems() if hide_styled else set()
 
         def matches(c: LoraInfo) -> bool:
             if favorites_only and not c.favorite:
+                return False
+            if hide_styled and c.name in has_style:
                 return False
             if base and c.base_model != base:
                 return False
@@ -276,9 +305,20 @@ class CheckpointPickerDialog(QDialog):
             self._filtered.sort(key=lambda c: (c.display_name or c.name).lower())
         self._populate_grid()
 
+    def _styled_stems(self) -> set[str]:
+        """Checkpoint stems (filename without extension) already used by an
+        existing style, so the browser can flag "you already have a style
+        for this" instead of the user finding out by trial and error."""
+        stems = set()
+        for style in Styles.list():
+            if style.checkpoints:
+                stems.add(Path(style.checkpoints[0]).stem)
+        return stems
+
     def _populate_grid(self):
         self._grid.clear()
         cell = self._grid.gridSize()
+        has_style = self._styled_stems()
         for c in self._filtered:
             label = c.display_name or c.name
             if c.version and c.version.lower() not in label.lower():
@@ -288,27 +328,39 @@ class CheckpointPickerDialog(QDialog):
             item.setSizeHint(cell)
             fav = "★ " if c.favorite else ""
             version_line = f"\nVersion: {c.version}" if c.version else ""
+            styled_line = "\n✓ Style already exists" if c.name in has_style else ""
             item.setToolTip(
-                f"{fav}{c.display_name}{version_line}\nFile: {c.name}\nBase: {c.base_model or '?'}"
+                f"{fav}{c.display_name}{version_line}\nFile: {c.name}\nBase: {c.base_model or '?'}{styled_line}"
             )
-            if c.sha256 in self._preview_cache:
-                item.setIcon(self._scaled_icon(c.sha256))
-            elif c.preview_url and _is_video_url(c.preview_url):
-                item.setIcon(theme.icon("play"))
+            self._set_tile_icon(item, c, has_style)
             self._grid.addItem(item)
         if not self._loading:
             self._status.setText(f"{len(self._filtered)} / {len(self._all)} checkpoints")
         self._schedule_visible_previews()
 
-    def _scaled_icon(self, key: str) -> QIcon:
-        pixmap = self._preview_cache[key]
-        scaled = pixmap.scaled(
-            self._preview_size,
-            self._preview_size,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        return QIcon(scaled)
+    def _tile_base(self, c: LoraInfo) -> QPixmap:
+        size = self._preview_size
+        if c.sha256 in self._preview_cache:
+            return self._preview_cache[c.sha256].scaled(
+                size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            )
+        if c.preview_url and _is_video_url(c.preview_url):
+            return theme.icon("play").pixmap(size, size)
+        blank = QPixmap(size, size)
+        blank.fill(Qt.GlobalColor.transparent)
+        return blank
+
+    def _base_model_label(self, base_model: str) -> str:
+        label = style_family_for_base_model(base_model)
+        return base_model if label == "Auto" else label
+
+    def _set_tile_icon(self, item: QListWidgetItem, c: LoraInfo, has_style: set[str] | None = None):
+        base = self._tile_base(c)
+        styled = c.name in has_style if has_style is not None else c.name in self._styled_stems()
+        if styled:
+            base = _with_style_badge(base)
+        base = _with_tag(base, self._base_model_label(c.base_model))
+        item.setIcon(QIcon(base))
 
     def _on_preview_size_changed(self, value: int):
         self._preview_size = value
@@ -318,8 +370,7 @@ class CheckpointPickerDialog(QDialog):
             item = self._grid.item(i)
             c: LoraInfo = item.data(Qt.ItemDataRole.UserRole)
             item.setSizeHint(self._grid.gridSize())
-            if c.sha256 in self._preview_cache:
-                item.setIcon(self._scaled_icon(c.sha256))
+            self._set_tile_icon(item, c)
         self._schedule_visible_previews()
 
     # ── lazy preview loading ──
@@ -364,7 +415,7 @@ class CheckpointPickerDialog(QDialog):
                     painter.drawPixmap(pixmap.width() - 28, pixmap.height() - 28, badge)
                     painter.end()
                 self._preview_cache[c.sha256] = pixmap
-                item.setIcon(self._scaled_icon(c.sha256))
+                self._set_tile_icon(item, c)
             else:
                 item.setIcon(theme.icon("filter"))
 

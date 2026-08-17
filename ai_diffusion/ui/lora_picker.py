@@ -44,7 +44,7 @@ from . import theme
 
 _PREVIEW_SIZE_DEFAULT = 96
 _PREVIEW_SIZE_MIN = 48
-_PREVIEW_SIZE_MAX = 192
+_PREVIEW_SIZE_MAX = 384
 _TAG_ALL = "__all__"
 _MAX_TAG_ENTRIES = 30
 _TRIGGER_ALL = "__all_triggers__"
@@ -92,9 +92,44 @@ def _is_video_url(url: str) -> bool:
 _COMMERCIAL_COLORS = {"yes": QColor(60, 170, 75), "no": QColor(205, 60, 55)}
 
 
-def _with_badges(pixmap: QPixmap, favorite: bool, commercial: str) -> QPixmap:
-    """Overlay a favorite star (top-right) and a commercial-use $ square (bottom-right):
-    green = commercial image use allowed, red = not allowed, grey = unknown."""
+def _with_tag(pixmap: QPixmap, text: str) -> QPixmap:
+    """Small label pill, bottom-left: the base model name."""
+    if not text:
+        return pixmap
+    result = QPixmap(pixmap)
+    painter = QPainter(result)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    font = painter.font()
+    font.setBold(True)
+    font.setPixelSize(max(9, result.width() // 12))
+    painter.setFont(font)
+    metrics = painter.fontMetrics()
+    pad = 4
+    text_w = metrics.horizontalAdvance(text)
+    h = metrics.height() + 2
+    w = min(result.width() - 4, text_w + pad * 2)
+    x, y = 2, result.height() - h - 2
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(0, 0, 0, 165))
+    painter.drawRoundedRect(x, y, w, h, 3, 3)
+    painter.setPen(QColor(255, 255, 255))
+    elided = metrics.elidedText(text, Qt.TextElideMode.ElideRight, w - pad * 2)
+    painter.drawText(QRect(x, y, w, h), Qt.AlignmentFlag.AlignCenter, elided)
+    painter.end()
+    return result
+
+
+def _base_model_label(base_model: str) -> str:
+    if not base_model:
+        return ""
+    arch = arch_for_base_model(base_model)
+    return _ARCH_LABELS.get(arch, base_model)
+
+
+def _with_badges(pixmap: QPixmap, favorite: bool, commercial: str, base_model: str = "") -> QPixmap:
+    """Overlay a favorite star (top-right), a commercial-use $ square (bottom-right):
+    green = commercial image use allowed, red = not allowed, grey = unknown, and a
+    base-model name tag (bottom-left)."""
     result = QPixmap(pixmap)
     painter = QPainter(result)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -126,7 +161,7 @@ def _with_badges(pixmap: QPixmap, favorite: bool, commercial: str) -> QPixmap:
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "★")
 
     painter.end()
-    return result
+    return _with_tag(result, base_model)
 
 
 def _visible_range(grid, overscan: int = 24) -> range:
@@ -500,9 +535,18 @@ class LoraPickerDialog(QDialog):
             self._filtered.sort(key=lambda l: (l.display_name or l.name).lower())
         self._populate_grid()
 
+    def _lora_key(self, lora: LoraInfo) -> str:
+        return lora.sha256 or lora.name
+
     def _populate_grid(self):
+        # the list is rebuilt as more LoRAs stream in (or filters/sort change) -
+        # remember what was selected so it doesn't vanish out from under the user
+        selected_keys = {
+            self._lora_key(i.data(Qt.ItemDataRole.UserRole)) for i in self._grid.selectedItems()
+        }
         self._grid.clear()
         cell_size = self._grid.gridSize()
+        to_reselect: list[QListWidgetItem] = []
         for lora in self._filtered:
             item = QListWidgetItem(lora.display_name or lora.name)
             item.setData(Qt.ItemDataRole.UserRole, lora)
@@ -519,6 +563,13 @@ class LoraPickerDialog(QDialog):
             )
             self._set_tile_icon(item, lora)
             self._grid.addItem(item)
+            if self._lora_key(lora) in selected_keys:
+                to_reselect.append(item)
+        if to_reselect:
+            with theme.SignalBlocker(self._grid):
+                for item in to_reselect:
+                    item.setSelected(True)
+            self._on_selection_changed()  # signals were blocked - refresh the bottom bar once
         if not self._loading:
             self._status.setText(f"{len(self._filtered)} / {len(self._all_loras)} LoRAs")
         self._schedule_visible_previews()
@@ -537,7 +588,14 @@ class LoraPickerDialog(QDialog):
 
     def _set_tile_icon(self, item: QListWidgetItem, lora: LoraInfo):
         # preview (or placeholder) with favorite star + commercial-use badge on top
-        item.setIcon(QIcon(_with_badges(self._tile_base(lora), lora.favorite, lora.commercial)))
+        item.setIcon(
+            QIcon(
+                _with_badges(
+                    self._tile_base(lora), lora.favorite, lora.commercial,
+                    _base_model_label(lora.base_model),
+                )
+            )
+        )
 
     def _on_preview_size_changed(self, value: int):
         self._preview_size = value

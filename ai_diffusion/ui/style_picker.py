@@ -34,11 +34,13 @@ from ..model.root import root
 from ..settings import settings
 from ..style import Style, Styles, sort_recent_styles
 from . import theme
-from .lora_picker import _extract_video_frame, _ffmpeg_path, _is_video_url, _visible_range
+from .lora_picker import _extract_video_frame, _ffmpeg_path, _is_video_url, _visible_range, _with_tag
 
 _ARCH_ANY = "__any__"
 _VIEW_LIST = "list"
 _VIEW_GRID = "grid"
+_SORT_NAME = "name"
+_SORT_DATE = "date"
 
 
 def _tint_pixmap(pixmap: QPixmap, color) -> QPixmap:
@@ -117,10 +119,15 @@ class StylePickerDialog(QDialog):
         self._view_combo.addItem(_("Grid"), _VIEW_GRID)
         self._view_combo.currentIndexChanged.connect(self._set_view_mode)
 
+        self._sort_combo = QComboBox(self)
+        self._sort_combo.addItem(_("Name"), _SORT_NAME)
+        self._sort_combo.addItem(_("Date Added"), _SORT_DATE)
+        self._sort_combo.currentIndexChanged.connect(self._apply_filter)
+
         size_label = QLabel(_("Size:"), self)
         self._size_slider = QSlider(Qt.Orientation.Horizontal, self)
         self._size_slider.setMinimum(32)
-        self._size_slider.setMaximum(256)
+        self._size_slider.setMaximum(512)
         self._size_slider.setValue(self._thumb_size)
         self._size_slider.setFixedWidth(90)
         self._size_slider.valueChanged.connect(self._on_size_changed)
@@ -134,6 +141,7 @@ class StylePickerDialog(QDialog):
         row2.addWidget(self._arch_combo, 1)
         row2.addWidget(self._favorites_check)
         row2.addWidget(self._view_combo)
+        row2.addWidget(self._sort_combo)
         row2.addWidget(size_label)
         row2.addWidget(self._size_slider)
 
@@ -200,10 +208,14 @@ class StylePickerDialog(QDialog):
         bottom.addWidget(self._delete_btn)
         bottom.addWidget(close_btn)
 
+        self._status = QLabel(self)
+        self._status.setStyleSheet(f"color: {theme.grey}; font-style: italic;")
+
         layout = QVBoxLayout()
         layout.addLayout(row1)
         layout.addLayout(row2)
         layout.addWidget(self._list, 1)
+        layout.addWidget(self._status)
         layout.addWidget(hint)
         layout.addLayout(bottom)
         self.setLayout(layout)
@@ -216,6 +228,11 @@ class StylePickerDialog(QDialog):
     def _set_view_mode(self):
         self._view = self._view_combo.currentData()
         size = self._thumb_size
+        # Batched layout avoids laying out the whole (possibly large) list at once;
+        # uniform sizes lets Qt skip per-item geometry lookups during scroll - only
+        # safe in grid mode, list mode mixes in shorter section-header rows
+        self._list.setLayoutMode(QListWidget.LayoutMode.Batched)
+        self._list.setBatchSize(100)
         if self._view == _VIEW_GRID:
             self._list.setViewMode(QListWidget.ViewMode.IconMode)
             self._list.setFlow(QListWidget.Flow.LeftToRight)
@@ -225,6 +242,7 @@ class StylePickerDialog(QDialog):
             self._list.setWordWrap(True)
             self._list.setSpacing(4)
             self._list.setIconSize(QSize(size, size))
+            self._list.setUniformItemSizes(True)
         else:
             self._list.setViewMode(QListWidget.ViewMode.ListMode)
             self._list.setFlow(QListWidget.Flow.TopToBottom)
@@ -234,6 +252,8 @@ class StylePickerDialog(QDialog):
             self._list.setWordWrap(False)
             self._list.setSpacing(0)
             self._list.setIconSize(QSize(size, size))
+            # now safe: headers and content rows are both given the same sizeHint
+            self._list.setUniformItemSizes(True)
         self._apply_filter()
 
     def _on_size_changed(self, value: int):
@@ -252,15 +272,16 @@ class StylePickerDialog(QDialog):
     def _style_stem(self, style: Style) -> str:
         return Path(style.checkpoints[0]).stem if style.checkpoints else ""
 
-    def _scaled_icon(self, pixmap: QPixmap) -> QIcon:
+    def _scaled_icon(self, pixmap: QPixmap, label: str = "") -> QIcon:
         # pre-scale to the icon size - handing QListWidget a full-resolution pixmap
         # makes it rescale on every repaint, which is what killed scroll performance
         s = self._thumb_size
-        return QIcon(
-            pixmap.scaled(
-                s, s, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-            )
+        scaled = pixmap.scaled(
+            s, s, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
         )
+        if label:
+            scaled = _with_tag(scaled, label)
+        return QIcon(scaled)
 
     def _load_checkpoint_previews(self):
         client = self._client()
@@ -297,7 +318,8 @@ class StylePickerDialog(QDialog):
             if not stem:
                 continue
             if stem in self._preview_cache:
-                item.setIcon(self._scaled_icon(self._preview_cache[stem]))
+                family_label = item.data(Qt.ItemDataRole.UserRole + 3) or ""
+                item.setIcon(self._scaled_icon(self._preview_cache[stem], family_label))
                 item.setData(Qt.ItemDataRole.UserRole + 2, True)
                 continue
             if stem in self._pending_previews:
@@ -326,7 +348,8 @@ class StylePickerDialog(QDialog):
         # apply to the requesting item; others sharing the stem pick it up from the
         # cache when they next scroll into view (see _load_visible_previews)
         try:
-            item.setIcon(self._scaled_icon(pixmap))
+            family_label = item.data(Qt.ItemDataRole.UserRole + 3) or ""
+            item.setIcon(self._scaled_icon(pixmap, family_label))
             item.setData(Qt.ItemDataRole.UserRole + 2, True)
         except RuntimeError:
             pass  # item was removed (list rebuilt) before the fetch finished
@@ -397,6 +420,7 @@ class StylePickerDialog(QDialog):
 
         self._list.clear()
         section = None  # None | "favorites" | "recent" | "all"
+        shown = 0
 
         # group into contiguous sections (favorites > recent > all) so each
         # header appears exactly once - favorites can be scattered through the
@@ -408,7 +432,21 @@ class StylePickerDialog(QDialog):
                 return 1
             return 2
 
-        for style in sorted(self._styles, key=bucket):
+        def sort_value(style: Style):
+            if self._sort_combo.currentData() == _SORT_DATE:
+                try:
+                    return -style.filepath.stat().st_ctime
+                except OSError:
+                    return 0.0
+            return style.name.lower()
+
+        def full_key(style: Style):
+            b = bucket(style)
+            # "Recently Used" keeps its own recency order regardless of the sort
+            # dropdown - that's the point of the section
+            return (b, 0) if b == 1 else (b, sort_value(style))
+
+        for style in sorted(self._styles, key=full_key):
             arch = resolve_arch(style, client)
             if family_filter and style.effective_family(arch) != family_filter:
                 continue
@@ -432,28 +470,39 @@ class StylePickerDialog(QDialog):
                 }[section]
                 header = QListWidgetItem(label)
                 header.setFlags(Qt.ItemFlag.NoItemFlags)
+                # same height as content rows - required for setUniformItemSizes,
+                # which is what makes scrolling fast (see _set_view_mode)
+                header.setSizeHint(QSize(9999, self._thumb_size + 8))
                 self._list.addItem(header)
 
             stem = self._style_stem(style)
+            family_label = style.effective_family(arch)
             applied = False
             if stem in self._preview_cache:  # real checkpoint thumbnail if we have it
-                icon = self._scaled_icon(self._preview_cache[stem])
+                icon = self._scaled_icon(self._preview_cache[stem], family_label)
                 applied = True
             else:
                 icon = theme.checkpoint_icon(arch, client=client)
                 if is_fav:
                     icon = _favorite_icon(icon)
+                pixmap = _with_tag(icon.pixmap(self._thumb_size, self._thumb_size), family_label)
+                icon = QIcon(pixmap)
             item = QListWidgetItem(icon, style.name)
             item.setData(Qt.ItemDataRole.UserRole, style.filename)
             item.setData(Qt.ItemDataRole.UserRole + 1, stem)
             item.setData(Qt.ItemDataRole.UserRole + 2, applied)
+            item.setData(Qt.ItemDataRole.UserRole + 3, family_label)
             if self._view == _VIEW_GRID:
                 item.setSizeHint(QSize(self._thumb_size + 16, self._thumb_size + 40))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+            else:
+                item.setSizeHint(QSize(9999, self._thumb_size + 8))
             if style == self._current:
                 item.setSelected(True)
             self._list.addItem(item)
+            shown += 1
 
+        self._status.setText(f"{shown} / {len(self._styles)} styles")
         self._schedule_visible_previews()
 
     def _activate(self, item: QListWidgetItem):
