@@ -11,6 +11,7 @@ from .localization import translate as _
 from .model.jobs import JobParams
 from .util import PluginError
 from .util import client_logger as log
+from .wildcards import WildcardLibrary
 
 # Functions to convert between position in Python str objects (unicode) and
 # index in QString char16 arrays (used in eg. QTextCursor).
@@ -51,6 +52,7 @@ pattern_layer = re.compile(r"<layer:([^>]+)>", re.IGNORECASE)
 pattern_weight_expr = re.compile(r"\([^:()]+:(-?[\d.]+)\)")
 pattern_wildcard = re.compile(r"(\{[^{}]+\|[^{}]+\})")
 pattern_seq_wildcard = re.compile(r"\[\[((?:(?!\]\]).)*)\]\]", re.DOTALL)
+pattern_file_wildcard = re.compile(r"__([\w\-./]+?)__")
 
 
 def strip_prompt_comments(prompt: str):
@@ -142,10 +144,18 @@ def replace_layers(prompt: str, layer_mapping: dict[str, int], replacement="Pict
 
 def eval_wildcards(text: str, seed: int, batch_index: int = 0):
     rng = random.Random(seed)
+    wildcard_library = WildcardLibrary.instance()
 
     def replace_random(match: re.Match[str]):
         options = match[1].strip("{} ").split("|")
         return rng.choice(options).strip()
+
+    def replace_file(match: re.Match[str]):
+        options = wildcard_library.get(match[1])
+        if not options:
+            return match[0]  # unknown/empty file - leave the __name__ visible rather
+            # than silently deleting it, so a typo or missing file is obvious
+        return rng.choice(options)
 
     # Cartesian product: each [[...]] group gets its own stride dimension
     seq_matches = list(pattern_seq_wildcard.finditer(text))
@@ -169,6 +179,7 @@ def eval_wildcards(text: str, seed: int, batch_index: int = 0):
 
     for __ in range(10):
         prev = text
+        text = pattern_file_wildcard.sub(replace_file, text)
         text = pattern_wildcard.sub(replace_random, text)
         if text == prev:
             break

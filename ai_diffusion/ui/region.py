@@ -181,10 +181,20 @@ class ActiveRegionWidget(QFrame):
         self._recipe_browse_button.clicked.connect(self._open_recipe_picker)
         self._recipe_dialog = None
 
+        self._wildcard_browse_button = QToolButton(self)
+        self._wildcard_browse_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._wildcard_browse_button.setIcon(theme.icon("random"))
+        self._wildcard_browse_button.setText(_("Wildcards"))
+        self._wildcard_browse_button.setToolTip(_("Browse file-based wildcards (__name__)"))
+        self._wildcard_browse_button.setAutoRaise(True)
+        self._wildcard_browse_button.clicked.connect(self._open_wildcard_picker)
+        self._wildcard_dialog = None
+
         prompt_tools_layout = QHBoxLayout()
         prompt_tools_layout.setContentsMargins(0, 0, 0, 0)
         prompt_tools_layout.setSpacing(2)
         prompt_tools_layout.addStretch()
+        prompt_tools_layout.addWidget(self._wildcard_browse_button)
         prompt_tools_layout.addWidget(self._recipe_browse_button)
         prompt_tools_layout.addWidget(self._lora_browse_button)
 
@@ -537,6 +547,15 @@ class ActiveRegionWidget(QFrame):
         self._recipe_dialog.show()
         self._recipe_dialog.raise_()
         self._recipe_dialog.activateWindow()
+
+    def _open_wildcard_picker(self):
+        from .wildcard_picker import WildcardPickerDialog
+
+        if self._wildcard_dialog is None:
+            self._wildcard_dialog = WildcardPickerDialog(parent=self)
+        self._wildcard_dialog.show()
+        self._wildcard_dialog.raise_()
+        self._wildcard_dialog.activateWindow()
 
     def resizeEvent(self, a0):
         super().resizeEvent(a0)
