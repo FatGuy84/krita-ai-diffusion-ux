@@ -61,6 +61,34 @@ Other batch changes:
 
   ![Loop Generate keeps enqueuing batches until toggled off](media/demo-loop-generate.gif)
 
+### File-based Wildcards
+
+`__name__` in a prompt picks a random line from a `.txt` file in your
+`wildcards/` folder (one option per line), matching the convention used by
+collections like [sd-wildcards](https://github.com/mattjaybe/sd-wildcards) —
+drop such a repo's `wildcards/` folder in directly and it works with no
+extra setup. `__folder/name__` addresses a file in a subfolder. A new
+**Wildcards** button next to LoRA/Recipe in the prompt toolbar opens a
+browser: search, a line-count + preview tooltip per file, a Reload button
+for files you just added, and an "Open Folder" button (creates the folder
+if it doesn't exist yet).
+
+Three insert modes:
+* **Normal** `__name__` — a live reference, re-read from the file and
+  picked at random every time you generate. Edit the file later and it
+  picks that up automatically.
+* **Random** `{a|b|c}` — expands the file's lines directly into the prompt
+  as a regular random wildcard group (a frozen snapshot at insert time, no
+  live file dependency).
+* **Sequential** `[[a|b|c]]` — same expansion, but cycles through every
+  line across the batch instead of picking randomly, so you can sweep a
+  whole wildcard file systematically in one batch (something a plain
+  `__name__` reference can't do, since file wildcards only pick randomly).
+
+Unknown/misspelled `__name__` references are left visible in the evaluated
+prompt rather than silently disappearing, so a typo or missing file is easy
+to spot instead of just producing a slightly-off image.
+
 ### LoRA Browser
 
 Click the **LoRA** button in the prompt field to open a visual LoRA picker
@@ -85,14 +113,17 @@ With Lora Manager available you get:
 * **Commercial-use badge**: a small $ square in the bottom-right corner of
   each thumbnail — green if CivitAI's license allows commercial use of
   generated images, red if it doesn't, grey if unknown. A gold ★ in the
-  top-right marks favorites. Right-click → **Open on CivitAI** jumps
-  straight to the model page.
+  top-right marks favorites, and a base-model name tag sits bottom-left.
+  Right-click → **Open on CivitAI** jumps straight to the model page.
 * **Sort by name or date added** — a dropdown next to the filters, useful
   for finding LoRAs you just downloaded without scrolling the whole list
 * **Trigger words** pulled from CivitAI metadata — insert them alongside the
   LoRA tag with one click, either a specific phrase group or all of them
-* **Adjustable thumbnail size** via a slider, and the whole list is cached to
-  disk so reopening the browser is instant instead of re-querying the server
+* **Adjustable thumbnail size** via a slider (up to 384px), and the whole
+  list is cached to disk so reopening the browser is instant instead of
+  re-querying the server. A selection you've made survives the list
+  reloading as more LoRAs stream in or filters change, instead of silently
+  dropping and forcing you to re-find what you picked.
 * **Reload list** (fast, re-fetches from Lora Manager) and **Scan server**
   (slower full ComfyUI model rescan, with a progress state) buttons — so you
   can pick up newly added LoRA files without leaving the browser
@@ -159,9 +190,12 @@ picker dialog as the LoRA browser. Click the style name/icon button
   (upstream already sorts by recent use — this just adds the same idea for
   styles you always come back to, regardless of recency)
 * **Checkpoint thumbnails**: each style shows the actual preview image of its
-  checkpoint (pulled from Lora Manager, video previews included), instead of
-  just a generic architecture icon — falls back to the icon when there's no
-  preview. Toggle between a **List** and a **Grid** view, with a size slider.
+  checkpoint (pulled from Lora Manager, video previews included) with a
+  base-model name tag, instead of just a generic architecture icon — falls
+  back to the icon when there's no preview. Toggle between a **List** and a
+  **Grid** view, with a size slider (up to 512px).
+* **Sort by name or date added** (the "Recently Used" section keeps its own
+  recency order regardless of the sort dropdown, since that's its purpose)
 * **Actions on selection**: buttons to add/remove a favorite or **delete** a
   style (user styles only, built-ins are protected), plus a Reload button.
 * **Generate across selected styles**: Ctrl/Shift-click several styles, set
@@ -180,7 +214,9 @@ one style per checkpoint in a single step**. Pick an existing style as a
 swapping in the checkpoint. Names come from the checkpoint's title (with its
 version), and the Base Model Family is filled in automatically from Lora
 Manager's metadata. Checkpoints not present on the server are skipped with a
-note rather than creating broken styles.
+note rather than creating broken styles. A green ✓ badge marks checkpoints
+that already have a style, and a **"Hide checkpoints with a style"** filter
+narrows the browser down to ones that don't yet.
 
 The same browser also has a **Generate across** button — like the style
 sweep above, but over raw checkpoints instead of full styles, useful for a
@@ -308,8 +344,11 @@ Custom workspace's workflow dropdown in Krita.
 * **Scrolling large LoRA/Recipe/Checkpoint/Style browsers was sluggish**:
   the lazy preview loader scanned every item (up to ~9000 LoRAs) on every
   scroll tick, and the style browser handed full-resolution images to the
-  list widget, which rescaled them on every repaint. Both fixed — loaders
-  now only look at what's actually visible, and thumbnails are pre-scaled.
+  list widget, which rescaled them on every repaint. Fixed — loaders now
+  only look at what's actually visible, and thumbnails are pre-scaled. The
+  style browser's list view specifically was still slow after that because
+  its rows (and section headers) had no explicit size, so Qt couldn't use
+  its fast equal-size layout path; both now get one.
 
 ## Installation
 
