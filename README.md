@@ -117,6 +117,9 @@ With Lora Manager available you get:
   Right-click → **Open on CivitAI** jumps straight to the model page.
 * **Sort by name or date added** — a dropdown next to the filters, useful
   for finding LoRAs you just downloaded without scrolling the whole list
+* **Content filter** (All / Safe Only / Hide Explicit), based on CivitAI's
+  content rating of the preview image (Safe Only hides R and above, Hide
+  Explicit hides only X/XXX)
 * **Trigger words** pulled from CivitAI metadata — insert them alongside the
   LoRA tag with one click, either a specific phrase group or all of them
 * **Adjustable thumbnail size** via a slider (up to 384px), and the whole
@@ -216,7 +219,8 @@ version), and the Base Model Family is filled in automatically from Lora
 Manager's metadata. Checkpoints not present on the server are skipped with a
 note rather than creating broken styles. A green ✓ badge marks checkpoints
 that already have a style, and a **"Hide checkpoints with a style"** filter
-narrows the browser down to ones that don't yet.
+narrows the browser down to ones that don't yet. Same **content filter**
+(All / Safe Only / Hide Explicit) as the LoRA browser.
 
 The same browser also has a **Generate across** button — like the style
 sweep above, but over raw checkpoints instead of full styles, useful for a

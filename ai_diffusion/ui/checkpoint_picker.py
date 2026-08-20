@@ -64,6 +64,9 @@ _PREVIEW_SIZE_MAX = 256
 _BASE_ANY = "__any__"
 _SORT_NAME = "name"
 _SORT_DATE = "date"
+_NSFW_ALL = "all"
+_NSFW_SAFE = "safe"
+_NSFW_HIDE_EXPLICIT = "hide_explicit"
 
 
 class CheckpointPickerDialog(QDialog):
@@ -115,6 +118,18 @@ class CheckpointPickerDialog(QDialog):
         self._hide_styled.setToolTip(_("Hide checkpoints that already have a style created for them"))
         self._hide_styled.toggled.connect(self._apply_filter)
 
+        self._nsfw_combo = QComboBox(self)
+        self._nsfw_combo.addItem(_("All"), _NSFW_ALL)
+        self._nsfw_combo.addItem(_("Safe Only"), _NSFW_SAFE)
+        self._nsfw_combo.addItem(_("Hide Explicit"), _NSFW_HIDE_EXPLICIT)
+        self._nsfw_combo.setToolTip(
+            _(
+                "Filter by the CivitAI content rating of the preview image.\n"
+                "Safe Only: hides R and above. Hide Explicit: hides X/XXX only."
+            )
+        )
+        self._nsfw_combo.currentIndexChanged.connect(self._apply_filter)
+
         sort_label = QLabel(_("Sort:"), self)
         self._sort_combo = QComboBox(self)
         self._sort_combo.addItem(_("Name"), _SORT_NAME)
@@ -134,6 +149,7 @@ class CheckpointPickerDialog(QDialog):
         row2.addWidget(self._base_combo, 1)
         row2.addWidget(self._favorites_only)
         row2.addWidget(self._hide_styled)
+        row2.addWidget(self._nsfw_combo)
         row2.addWidget(sort_label)
         row2.addWidget(self._sort_combo)
         row2.addWidget(size_label)
@@ -284,9 +300,14 @@ class CheckpointPickerDialog(QDialog):
         favorites_only = self._favorites_only.isChecked()
         hide_styled = self._hide_styled.isChecked()
         has_style = self._styled_stems() if hide_styled else set()
+        nsfw_mode = self._nsfw_combo.currentData()
 
         def matches(c: LoraInfo) -> bool:
             if favorites_only and not c.favorite:
+                return False
+            if nsfw_mode == _NSFW_SAFE and c.nsfw_level >= 8:  # R and above
+                return False
+            if nsfw_mode == _NSFW_HIDE_EXPLICIT and c.nsfw_level >= 16:  # X/XXX
                 return False
             if hide_styled and c.name in has_style:
                 return False

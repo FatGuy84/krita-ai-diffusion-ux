@@ -19,7 +19,7 @@ _STRIP_SUFFIXES = (".safetensors", ".pt", ".ckpt", ".bin")
 _CACHE_MAX_AGE = 6 * 3600  # seconds
 # Bump when the cached data shape/semantics change, to invalidate old caches
 # written before a fix (e.g. the favorite flag used to always be False).
-_CACHE_VERSION = 4
+_CACHE_VERSION = 5
 
 
 def _clean_name(file_name: str) -> str:
@@ -46,6 +46,9 @@ class LoraInfo:
     file_path: str = ""  # full path on the server, needed to query per-model metadata
     commercial: str = ""  # "", "yes" or "no" - filled in lazily (see fetch_commercial_use)
     civitai_model_id: int = 0  # 0 if not from CivitAI
+    # CivitAI content-rating bit flag for the preview image specifically (not
+    # necessarily the whole model): 1=G 2=PG 4=PG-13 8=R 16=X 32=XXX, 0=unrated
+    nsfw_level: int = 0
 
     @staticmethod
     def from_api(data: dict, base_url: str) -> LoraInfo:
@@ -77,6 +80,7 @@ class LoraInfo:
             trigger_words=trigger_words,
             version=version,
             civitai_model_id=civitai_model_id,
+            nsfw_level=int(data.get("preview_nsfw_level") or 0),
             favorite=bool(data.get("favorite", False)),
             sha256=sha256,
             modified=float(data.get("modified") or 0.0),

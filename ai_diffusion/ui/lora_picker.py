@@ -60,6 +60,9 @@ _SORT_DATE = "date"
 _POS_END = "end"
 _POS_START = "start"
 _POS_CURSOR = "cursor"
+_NSFW_ALL = "all"
+_NSFW_SAFE = "safe"
+_NSFW_HIDE_EXPLICIT = "hide_explicit"
 _KNOWN_ARCHES = [
     "sd15", "sdxl", "illu", "sd3", "flux", "flux_k",
     "chroma", "qwen", "anima", "zimage", "ernie", "krea2",
@@ -272,6 +275,18 @@ class LoraPickerDialog(QDialog):
         self._favorites_only = QCheckBox(_("Favorites"), self)
         self._favorites_only.toggled.connect(self._apply_filter)
 
+        self._nsfw_combo = QComboBox(self)
+        self._nsfw_combo.addItem(_("All"), _NSFW_ALL)
+        self._nsfw_combo.addItem(_("Safe Only"), _NSFW_SAFE)
+        self._nsfw_combo.addItem(_("Hide Explicit"), _NSFW_HIDE_EXPLICIT)
+        self._nsfw_combo.setToolTip(
+            _(
+                "Filter by the CivitAI content rating of the preview image.\n"
+                "Safe Only: hides R and above. Hide Explicit: hides X/XXX only."
+            )
+        )
+        self._nsfw_combo.currentIndexChanged.connect(self._apply_filter)
+
         sort_label = QLabel(_("Sort:"), self)
         self._sort_combo = QComboBox(self)
         self._sort_combo.addItem(_("Name"), _SORT_NAME)
@@ -292,6 +307,7 @@ class LoraPickerDialog(QDialog):
         row2.addWidget(tag_label)
         row2.addWidget(self._tag_combo, 1)
         row2.addWidget(self._favorites_only)
+        row2.addWidget(self._nsfw_combo)
         row2.addWidget(sort_label)
         row2.addWidget(self._sort_combo)
         row2.addWidget(size_label)
@@ -507,9 +523,14 @@ class LoraPickerDialog(QDialog):
         arch = "" if arch == _ARCH_ANY else (arch or "")
         active_tag = self._tag_combo.currentData()
         favorites_only = self._favorites_only.isChecked()
+        nsfw_mode = self._nsfw_combo.currentData()
 
         def matches(lora: LoraInfo) -> bool:
             if favorites_only and not lora.favorite:
+                return False
+            if nsfw_mode == _NSFW_SAFE and lora.nsfw_level >= 8:  # R and above
+                return False
+            if nsfw_mode == _NSFW_HIDE_EXPLICIT and lora.nsfw_level >= 16:  # X/XXX
                 return False
             if arch:
                 if lora.base_model:
