@@ -6,7 +6,7 @@ and batch generation workflows.
 
 All credit for the plugin itself goes to [Acly](https://github.com/Acly) and the
 upstream contributors — this fork only layers UX improvements on top and tracks
-upstream releases (currently based on v1.52.1).
+upstream releases (currently based on v1.53.0).
 
 **This fork is for you if:**
 
