@@ -47,6 +47,8 @@ from ..model.updates import UpdateState
 from ..settings import ImageFileFormat, PerformancePreset, ServerMode, Settings, settings
 from ..style import Style
 from .server import ServerWidget
+from ..backend import ollama
+from ..backend.network import NetworkError
 from .settings_widgets import (
     ComboBoxSetting,
     FileListSetting,
@@ -54,6 +56,7 @@ from .settings_widgets import (
     SliderSetting,
     SpinBoxSetting,
     SwitchSetting,
+    TextSetting,
 )
 from .style import StylePresets
 from .theme import add_header, green, grey, logo, prompt_max_line_count, red, yellow
@@ -800,6 +803,109 @@ class InterfaceSettings(SettingsTab):
         self._widgets["save_image_metadata"].enabled = fmt.extension == "png"
 
 
+class PromptEnhanceSettings(SettingsTab):
+    def __init__(self):
+        super().__init__(_("Prompt Enhancement"))
+
+        S = Settings
+        self.add("ollama_enabled", SwitchSetting(S._ollama_enabled, parent=self))
+        self.add("ollama_url", TextSetting(S._ollama_url, parent=self))
+        self.add("ollama_model", ComboBoxSetting(S._ollama_model, parent=self))
+
+        self._status = QLabel(self)
+        self._status.setWordWrap(True)
+        self._refresh_button = QPushButton(_("Connect"), self)
+        self._refresh_button.clicked.connect(self.refresh_models)
+        status_layout = QHBoxLayout()
+        status_layout.addWidget(self._refresh_button)
+        status_layout.addWidget(self._status, 1)
+        self._layout.addLayout(status_layout)
+        self._layout.addSpacing(6)
+
+        self.add(
+            "ollama_keep_alive",
+            SpinBoxSetting(S._ollama_keep_alive, self, 0, 3600, 30, _(" seconds")),
+        )
+        self.add("ollama_free_comfy_vram", SwitchSetting(S._ollama_free_comfy_vram, parent=self))
+        self.add(
+            "ollama_temperature", SliderSetting(S._ollama_temperature, self, 0.1, 2.0, "{:.1f}")
+        )
+        self.add("ollama_max_tokens", SpinBoxSetting(S._ollama_max_tokens, self, 64, 4096, 64))
+        self.add(
+            "ollama_timeout", SpinBoxSetting(S._ollama_timeout, self, 10, 900, 10, _(" seconds"))
+        )
+        self.add("ollama_variation_count", SpinBoxSetting(S._ollama_variation_count, self, 2, 20))
+
+        self._layout.addSpacing(6)
+        anchor = _("Open profile folder")
+        profile_hint = QLabel(
+            _(
+                "Prompt profiles decide how prompts are written for each base model family"
+                " (tags for SDXL/Illustrious, prose for Flux/Krea 2, ...). Place a"
+                " 'prompt_enhance.json' in the settings folder to customize them."
+            )
+            + f" <a href='file://{util.user_data_dir}'>{anchor}</a>",
+            self,
+        )
+        profile_hint.setWordWrap(True)
+        profile_hint.setStyleSheet(f"font-style:italic; color: {grey};")
+        profile_hint.linkActivated.connect(self._open_profile_folder)
+        self._layout.addWidget(profile_hint)
+
+        self._reload_profiles = QPushButton(_("Reload Profiles"), self)
+        self._reload_profiles.clicked.connect(self._do_reload_profiles)
+        self._layout.addWidget(self._reload_profiles, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        self._layout.addStretch()
+
+    def _read(self):
+        if settings.ollama_model:
+            # keep the stored model selectable even before the server was queried
+            combo: ComboBoxSetting = self._widgets["ollama_model"]
+            if combo._combo.findData(settings.ollama_model) == -1:
+                combo.set_items([settings.ollama_model])
+                combo.value = settings.ollama_model
+
+    def refresh_models(self):
+        self._status.setText(_("Connecting..."))
+        self._status.setStyleSheet(f"color: {grey};")
+        eventloop.run(self._fetch_models())
+
+    async def _fetch_models(self):
+        try:
+            models = await ollama.list_models()
+        except NetworkError as e:
+            self._status.setText(_("Not connected") + f": {e}")
+            self._status.setStyleSheet(f"color: {red};")
+            return
+        except Exception as e:
+            self._status.setText(str(e))
+            self._status.setStyleSheet(f"color: {red};")
+            return
+
+        combo: ComboBoxSetting = self._widgets["ollama_model"]
+        previous = settings.ollama_model
+        if not models:
+            self._status.setText(_("Connected, but no models are installed") + " (ollama pull ...)")
+            self._status.setStyleSheet(f"color: {yellow};")
+            return
+        combo.set_items(models)
+        combo.value = previous if previous in models else models[0]
+        self.write()
+        self._status.setText(_("Connected") + f" - {len(models)} " + _("models available"))
+        self._status.setStyleSheet(f"color: {green};")
+
+    def _open_profile_folder(self):
+        util.user_data_dir.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(util.user_data_dir)))
+
+    def _do_reload_profiles(self):
+        profiles = ollama.Profiles.reload()
+        names = ", ".join(p.name for p in profiles)
+        self._status.setText(_("Profiles reloaded") + f": {names}")
+        self._status.setStyleSheet(f"color: {green};")
+
+
 class HistorySizeWidget(QWidget):
     value_changed = pyqtSignal()
 
@@ -1171,6 +1277,7 @@ class SettingsDialog(QDialog):
         self.styles = StylePresets(server)
         self.diffusion = DiffusionSettings()
         self.interface = InterfaceSettings()
+        self.prompt_ai = PromptEnhanceSettings()
         self.performance = PerformanceSettings()
         self.about = AboutSettings()
 
@@ -1187,6 +1294,7 @@ class SettingsDialog(QDialog):
         create_list_item(_("Styles"), self.styles)
         create_list_item(_("Diffusion"), self.diffusion)
         create_list_item(_("Interface"), self.interface)
+        create_list_item(_("Prompt AI"), self.prompt_ai)
         create_list_item(_("Performance"), self.performance)
         create_list_item(_("Plugin"), self.about)
 
@@ -1231,6 +1339,7 @@ class SettingsDialog(QDialog):
         self.styles.read()
         self.diffusion.read()
         self.interface.read()
+        self.prompt_ai.read()
         self.performance.read()
         self.about.read()
 

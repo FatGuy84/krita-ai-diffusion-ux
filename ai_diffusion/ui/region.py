@@ -16,14 +16,18 @@ from PyQt5.QtGui import (
 )
 from PyQt5.QtWidgets import QFrame, QHBoxLayout, QLabel, QMenu, QToolButton, QVBoxLayout, QWidget
 
+from .. import eventloop
+from ..backend import ollama
 from ..backend.client import Client
+from ..backend.network import NetworkError
+from ..backend.ollama import EnhanceTask
 from ..document import LayerType
 from ..image import Bounds
 from ..localization import translate as _
 from ..model.properties import Binding, bind
 from ..model.region import Region, RegionLink, RootRegion, translate_prompt
 from ..model.root import root
-from ..util import ensure
+from ..util import client_logger as log, ensure
 from . import theme
 from .control import ControlListWidget
 from .lora_picker import LoraPickerDialog
@@ -190,10 +194,24 @@ class ActiveRegionWidget(QFrame):
         self._wildcard_browse_button.clicked.connect(self._open_wildcard_picker)
         self._wildcard_dialog = None
 
+        self._enhance_button = QToolButton(self)
+        self._enhance_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._enhance_button.setIcon(theme.icon("enhance"))
+        self._enhance_button.setText(_("Enhance"))
+        self._enhance_button.setAutoRaise(True)
+        self._enhance_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self._enhance_button.setMenu(self._create_enhance_menu())
+        self._enhance_button.clicked.connect(partial(self._enhance, EnhanceTask.enhance))
+        self._enhance_button.setVisible(settings.ollama_enabled)
+        self._enhance_backup: str | None = None
+        self._enhance_running = False
+        self._update_enhance_tooltip()
+
         prompt_tools_layout = QHBoxLayout()
         prompt_tools_layout.setContentsMargins(0, 0, 0, 0)
         prompt_tools_layout.setSpacing(2)
         prompt_tools_layout.addStretch()
+        prompt_tools_layout.addWidget(self._enhance_button)
         prompt_tools_layout.addWidget(self._wildcard_browse_button)
         prompt_tools_layout.addWidget(self._recipe_browse_button)
         prompt_tools_layout.addWidget(self._lora_browse_button)
@@ -408,6 +426,10 @@ class ActiveRegionWidget(QFrame):
             self._update_prompt_widgets()
         elif key == "prompt_translation":
             self._update_language()
+        elif key == "ollama_enabled":
+            self._enhance_button.setVisible(value)
+        elif key == "ollama_model":
+            self._update_enhance_tooltip()
 
     async def _replace_with_translation(self, client: Client):
         region = self.region
@@ -464,7 +486,9 @@ class ActiveRegionWidget(QFrame):
         elif isinstance(self._region, Region):
             self.positive.line_count = 1
         elif self.has_negative:
-            self.positive.line_count = max(1, settings.prompt_line_count_live - self.negative.line_count)
+            self.positive.line_count = max(
+                1, settings.prompt_line_count_live - self.negative.line_count
+            )
         else:
             self.positive.line_count = settings.prompt_line_count_live
         self.negative.setVisible(self.has_negative)
@@ -527,6 +551,103 @@ class ActiveRegionWidget(QFrame):
         if 1 <= new_line_count <= theme.prompt_max_line_count:
             return new_line_count
         return None
+
+    def _create_enhance_menu(self):
+        menu = QMenu(self)
+        menu.addAction(_("Enhance"), partial(self._enhance, EnhanceTask.enhance))
+        menu.addAction(_("Rewrite from scratch"), partial(self._enhance, EnhanceTask.rewrite))
+        menu.addAction(_("Add detail only"), partial(self._enhance, EnhanceTask.detail))
+        menu.addAction(
+            _("Variations as sequential wildcard"),
+            partial(self._enhance, EnhanceTask.variations),
+        )
+        menu.addSeparator()
+        self._revert_action = menu.addAction(_("Revert"), self._revert_enhance)
+        self._revert_action.setEnabled(False)
+        return menu
+
+    def _update_enhance_tooltip(self):
+        model = settings.ollama_model or _("not configured")
+        self._enhance_button.setToolTip(
+            _("Rewrite the prompt with a local language model") + f" ({model})"
+        )
+
+    def _revert_enhance(self):
+        if self._enhance_backup is not None and self.region is not None:
+            self.region.positive = self._enhance_backup
+            self._enhance_backup = None
+            self._revert_action.setEnabled(False)
+
+    def _enhance(self, task: EnhanceTask):
+        if self._enhance_running:
+            return
+        if not settings.ollama_model:
+            self._report_error(
+                _("No language model selected. Configure one in Settings -> Prompt AI.")
+            )
+            return
+        eventloop.run(self._run_enhance(task))
+
+    def _report_error(self, message: str):
+        if model := root.active_model:
+            model.report_error(message)
+        else:
+            log.error(message)
+
+    async def _run_enhance(self, task: EnhanceTask):
+        region = self.region
+        model = root.active_model
+        if region is None or model is None:
+            return
+
+        self._enhance_running = True
+        self._enhance_button.setEnabled(False)
+        original = region.positive
+        try:
+            family = model.active_style.effective_family(model.arch)
+            profile = ollama.Profiles.instance().for_family(family)
+            if profile is None:
+                self._report_error(_("No prompt profile found for") + f" {family}")
+                return
+
+            protected = ollama.protect(original)
+            count = max(2, settings.ollama_variation_count)
+            request = ollama.build_prompt(task, protected.text, count)
+
+            if settings.ollama_free_comfy_vram:
+                if client := root.connection.client_if_connected:
+                    await ollama.free_comfy_vram(client)
+
+            response = await ollama.generate(profile.system, request)
+            if not response:
+                self._report_error(_("The language model returned an empty response"))
+                return
+
+            if task is EnhanceTask.variations:
+                lines = [line.strip(" -*\t") for line in response.splitlines()]
+                lines = [line for line in lines if line][:count]
+                if len(lines) < 2:
+                    self._report_error(_("The language model did not return variations"))
+                    return
+                result = "[[" + "|".join(lines) + "]]"
+            elif task is EnhanceTask.detail:
+                result = f"{original.rstrip(' ,')}, {response}" if original.strip() else response
+                protected = ollama.ProtectedPrompt(result, [])  # tokens are still in `original`
+            else:
+                result = response
+
+            if self.region is region and region.positive == original:
+                region.positive = protected.restore(result)
+                self._enhance_backup = original
+                self._revert_action.setEnabled(True)
+        except NetworkError as e:
+            self._report_error(_("Could not reach Ollama") + f" ({ollama.url()}): {e}")
+        except Exception as e:
+            log.exception("Prompt enhancement failed")
+            self._report_error(_("Prompt enhancement failed") + f": {e}")
+        finally:
+            self._enhance_running = False
+            self._enhance_button.setEnabled(True)
 
     def _open_lora_picker(self):
         if self._lora_dialog is None:
