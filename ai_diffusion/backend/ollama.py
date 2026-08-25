@@ -57,10 +57,11 @@ async def list_models() -> list[str]:
     return sorted(m["name"] for m in models if m.get("name"))
 
 
-async def generate(system: str, prompt: str, *, timeout: float | None = None) -> str:
+async def generate(
+    prompt: str, *, system: str = "", model: str = "", timeout: float | None = None
+) -> str:
     data = {
-        "model": settings.ollama_model,
-        "system": system,
+        "model": model or settings.ollama_model,
         "prompt": prompt,
         # The reply is consumed as a single JSON document - streaming would produce
         # newline-delimited JSON which the request manager cannot parse.
@@ -72,6 +73,8 @@ async def generate(system: str, prompt: str, *, timeout: float | None = None) ->
             "num_predict": settings.ollama_max_tokens,
         },
     }
+    if system:  # without it the model keeps whatever SYSTEM its Modelfile defines
+        data["system"] = system
     timeout = timeout or settings.ollama_timeout
     result = await _requests.http("POST", f"{url()}/api/generate", data, timeout=timeout)
     return clean_response(result.get("response", ""))
@@ -151,7 +154,8 @@ def protect(prompt: str) -> ProtectedPrompt:
 class Profile:
     id: str
     name: str
-    system: str
+    system: str = ""  # empty: keep the system prompt baked into the Ollama model
+    model: str = ""  # empty: use the model selected in the settings
 
 
 class Profiles:
@@ -165,7 +169,9 @@ class Profiles:
 
     def __init__(self, data: dict):
         self._profiles = {
-            key: Profile(key, value.get("name", key), value.get("system", ""))
+            key: Profile(
+                key, value.get("name", key), value.get("system", ""), value.get("model", "")
+            )
             for key, value in (data.get("profiles") or {}).items()
         }
         self._families: dict[str, str] = data.get("families") or {}

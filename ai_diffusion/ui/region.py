@@ -618,7 +618,7 @@ class ActiveRegionWidget(QFrame):
                 if client := root.connection.client_if_connected:
                     await ollama.free_comfy_vram(client)
 
-            response = await ollama.generate(profile.system, request)
+            response = await ollama.generate(request, system=profile.system, model=profile.model)
             if not response:
                 self._report_error(_("The language model returned an empty response"))
                 return
