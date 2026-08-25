@@ -358,15 +358,31 @@ _inpaint_mode_text = {
 }
 
 
-def create_mode_label(params: JobParams) -> str | None:
-    if params.workflow_kind is None:
-        return None
+def create_mode_label(params: JobParams) -> str:
     label = _workflow_kind_text.get(params.workflow_kind, params.workflow_kind.name)
     if params.workflow_kind in (WorkflowKind.inpaint, WorkflowKind.refine_region):
         detail = _inpaint_mode_text.get(params.inpaint_mode) if params.inpaint_mode else None
         if detail:
             label = f"{label} ({detail})"
     return label
+
+
+digital_source_type = "http://cv.iptc.org/newscodes/digitalsourcetype/"
+
+
+def create_ai_generated_xmp(workflow_kind: WorkflowKind):
+    source_type = "trainedAlgorithmicMedia"
+    if workflow_kind is not WorkflowKind.generate:
+        source_type = "compositeWithTrainedAlgorithmicMedia"
+    return f'''<?xpacket begin="\ufeff" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+   xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/"
+   Iptc4xmpExt:DigitalSourceType="{digital_source_type}{source_type}"/>
+ </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>'''
 
 
 # creates the img text metadata for embedding in PNG files in style like Automatic1111

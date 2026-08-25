@@ -59,7 +59,7 @@ class JobParams:
     has_mask: bool = False
     is_layered: bool = False
     inpaint_mode: InpaintMode | None = None
-    workflow_kind: WorkflowKind | None = None
+    workflow_kind: WorkflowKind = WorkflowKind.custom
     frame: tuple[int, int, int] = (0, 0, 0)
     animation_id: str = ""
     resize_canvas: bool = False

@@ -454,43 +454,83 @@ class Image:
             raise ValueError("Not a valid PNG file")
 
         offset = 8
+        result = bytearray(png_data[:8])
         ihdr_inserted = False
+        keyword_bytes = keyword.encode("latin1")
+        text_bytes = text.encode("utf-8")
+        itxt_data = (
+            keyword_bytes
+            + b"\x00"
+            + b"\x00"  # compression flag: 0 (not compressed)
+            + b"\x00"  # compression method: 0
+            + b"\x00"  # language tag: empty
+            + b"\x00"  # translated keyword: empty
+            + text_bytes
+        )
+        itxt_chunk = (
+            struct.pack(">I", len(itxt_data))
+            + b"iTXt"
+            + itxt_data
+            + struct.pack(">I", zlib.crc32(b"iTXt" + itxt_data) & 0xFFFFFFFF)
+        )
 
-        with open(img_path, "wb") as f:
-            # Write PNG header
-            f.write(png_data[:8])
+        while offset < len(png_data):
+            length = struct.unpack(">I", png_data[offset : offset + 4])[0]
+            chunk_end = offset + 12 + length
+            chunk_type = png_data[offset + 4 : offset + 8]
+            result += png_data[offset:chunk_end]
+            offset = chunk_end
+            if not ihdr_inserted and chunk_type == b"IHDR":
+                result += itxt_chunk
+                ihdr_inserted = True
 
-            while offset < len(png_data):
-                length = struct.unpack(">I", png_data[offset : offset + 4])[0]
-                chunk_type = png_data[offset + 4 : offset + 8]
-                chunk_data = png_data[offset + 8 : offset + 8 + length]
-                crc = png_data[offset + 8 + length : offset + 12 + length]
-                offset += 12 + length
+        Path(img_path).write_bytes(result)
 
-                # Write original chunk
-                f.write(struct.pack(">I", length))
-                f.write(chunk_type)
-                f.write(chunk_data)
-                f.write(crc)
+    @staticmethod
+    def read_png_text(img_path: str | Path) -> dict[str, str]:
+        """Read tEXt/zTXt/iTXt chunks from a PNG file, keyed by keyword.
 
-                if not ihdr_inserted and chunk_type == b"IHDR":
-                    # Insert iTXt chunk after IHDR
-                    keyword_bytes = keyword.encode("latin1")
-                    text_bytes = text.encode("utf-8")
-                    itxt_data = (
-                        keyword_bytes
-                        + b"\x00"
-                        + b"\x00"  # compression flag: 0 (not compressed)
-                        + b"\x00"  # compression method: 0
-                        + b"\x00"  # language tag: empty
-                        + b"\x00"  # translated keyword: empty
-                        + text_bytes
-                    )
-                    f.write(struct.pack(">I", len(itxt_data)))
-                    f.write(b"iTXt")
-                    f.write(itxt_data)
-                    f.write(struct.pack(">I", zlib.crc32(b"iTXt" + itxt_data) & 0xFFFFFFFF))
-                    ihdr_inserted = True
+        QImageReader.text() collapses newlines in PNG text chunks, which destroys the line
+        structure of prompts written by other tools. Parsing the chunks directly keeps the
+        text byte-for-byte as it was written.
+        """
+        result: dict[str, str] = {}
+        data = Path(img_path).read_bytes()
+        if data[:8] != b"\x89PNG\r\n\x1a\n":
+            return result
+
+        offset = 8
+        while offset + 8 <= len(data):
+            length = struct.unpack(">I", data[offset : offset + 4])[0]
+            chunk_type = data[offset + 4 : offset + 8]
+            chunk_data = data[offset + 8 : offset + 8 + length]
+            offset += 12 + length  # length + type + data + crc
+
+            if chunk_type == b"IEND":
+                break
+            if chunk_type not in (b"tEXt", b"zTXt", b"iTXt"):
+                continue
+
+            try:
+                keyword, rest = chunk_data.split(b"\x00", 1)
+                if chunk_type == b"tEXt":
+                    text = rest.decode("utf-8", errors="replace")
+                elif chunk_type == b"zTXt":
+                    # rest = compression method (1 byte) + compressed text
+                    text = zlib.decompress(rest[1:]).decode("utf-8", errors="replace")
+                else:  # iTXt
+                    # rest = flag + method + language\0 + translated keyword\0 + text
+                    compressed = rest[0] == 1
+                    _, _, tail = rest[2:].split(b"\x00", 2)
+                    if compressed:
+                        tail = zlib.decompress(tail)
+                    text = tail.decode("utf-8", errors="replace")
+                result[keyword.decode("latin1")] = text
+            except Exception as e:
+                log.warning(f"Skipping malformed PNG text chunk in {img_path}: {e}")
+                continue  # keep reading the rest of the file
+
+        return result
 
     @classmethod
     def mask_subtract(cls, lhs: Image, rhs: Image):
@@ -668,6 +708,92 @@ class Image:
     ):
         png_bytes = bytes(self.to_bytes(format or ImageFileFormat.png))
         self.save_png_w_itxt(filepath, png_bytes, "parameters", metadata_text)
+
+    def write_xmp_metadata(self, filepath: str | Path, xmp: str):
+        path = Path(filepath)
+        match path.suffix.lower():
+            case ".png":
+                self.save_png_w_itxt(path, path.read_bytes(), "XML:com.adobe.xmp", xmp)
+            case ".jpg" | ".jpeg":
+                self._write_jpeg_xmp(path, xmp.encode("utf-8"))
+            case ".webp":
+                self._write_webp_xmp(path, xmp.encode("utf-8"))
+            case _:
+                raise ValueError(f"Unsupported image format for XMP metadata: {path.suffix}")
+
+    @staticmethod
+    def _write_jpeg_xmp(path: Path, xmp: bytes):
+        header = b"http://ns.adobe.com/xap/1.0/\x00"
+        segment = header + xmp
+        if len(segment) > 65533:
+            raise ValueError("XMP metadata is too large for JPEG")
+        data = path.read_bytes()
+        if not data.startswith(b"\xff\xd8"):
+            raise ValueError("Not a valid JPEG file")
+
+        result = bytearray(data[:2])
+        offset = 2
+        while offset < len(data):
+            if data[offset] != 0xFF or offset + 4 > len(data):
+                result += data[offset:]
+                break
+            marker = data[offset + 1]
+            if marker in {0xD9, 0xDA}:
+                result += data[offset:]
+                break
+            length = struct.unpack(">H", data[offset + 2 : offset + 4])[0]
+            end = offset + 2 + length
+            if end > len(data):
+                raise ValueError("Invalid JPEG segment length")
+            is_xmp = marker == 0xE1 and data[offset + 4 : end].startswith(header)
+            if not is_xmp:
+                result += data[offset:end]
+            offset = end
+
+        xmp_segment = b"\xff\xe1" + struct.pack(">H", len(segment) + 2) + segment
+        path.write_bytes(data[:2] + xmp_segment + result[2:])
+
+    def _write_webp_xmp(self, path: Path, xmp: bytes):
+        data = path.read_bytes()
+        if data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+            raise ValueError("Not a valid WebP file")
+
+        chunks: list[tuple[bytes, bytes]] = []
+        offset = 12
+        has_vp8x = False
+        while offset + 8 <= len(data):
+            kind = data[offset : offset + 4]
+            size = struct.unpack("<I", data[offset + 4 : offset + 8])[0]
+            end = offset + 8 + size
+            if end > len(data):
+                raise ValueError("Invalid WebP chunk length")
+            chunk = data[offset + 8 : end]
+            offset = end + size % 2
+            if kind == b"XMP ":
+                continue
+            if kind == b"VP8X":
+                if len(chunk) != 10:
+                    raise ValueError("Invalid WebP VP8X chunk")
+                flags = bytearray(chunk)
+                flags[0] |= 0x04
+                chunk = bytes(flags)
+                has_vp8x = True
+            chunks.append((kind, chunk))
+
+        if not has_vp8x:
+            vp8x = bytearray(10)
+            vp8x[0] = 0x04
+            vp8x[4:7] = (self.width - 1).to_bytes(3, "little")
+            vp8x[7:10] = (self.height - 1).to_bytes(3, "little")
+            chunks.insert(0, (b"VP8X", bytes(vp8x)))
+        chunks.append((b"XMP ", xmp))
+
+        body = bytearray(b"WEBP")
+        for kind, chunk in chunks:
+            body += kind + struct.pack("<I", len(chunk)) + chunk
+            if len(chunk) % 2:
+                body += b"\x00"
+        path.write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
 
     def debug_save(self, name):
         if settings.debug_image_folder:

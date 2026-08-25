@@ -7,7 +7,7 @@ import weakref
 from collections import deque
 from copy import copy
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -55,10 +55,11 @@ from ..settings import (
     ApplyRegionBehavior,
     GenerationFinishedAction,
     ImageFileFormat,
+    ServerMode,
     settings,
 )
 from ..style import Arch, Style, Styles
-from ..text import create_img_metadata, extract_layers
+from ..text import create_ai_generated_xmp, create_img_metadata, extract_layers
 from ..util import PluginError, clamp, ensure, trim_text, unique
 from ..util import client_logger as log
 from .connection import Connection, ConnectionState
@@ -379,7 +380,7 @@ class DocumentModel(QObject, ObservableProperties):
         job_params.set_style(self.active_style, ensure(input.models).checkpoint)
         job_params.set_control(regions.control)
         job_params.inpaint_mode = inpaint_mode
-        job_params.workflow_kind = workflow_kind
+        # workflow_kind is set centrally in enqueue_jobs() (params.workflow_kind = input.kind)
         job_params.ref_layers = ref_layers
         job_params.is_layered = arch is Arch.qwen_l
         job_params.metadata.update(prompt_meta)
@@ -402,6 +403,7 @@ class DocumentModel(QObject, ObservableProperties):
         sampling = ensure(input.sampling)
         params.has_mask = input.images is not None and input.images.hires_mask is not None
         params.batch_id = uuid.uuid4().hex
+        params.workflow_kind = input.kind
         queue_mode = queue_mode or self.queue_mode
 
         if queue_mode is QueueMode.replace:
@@ -593,7 +595,7 @@ class DocumentModel(QObject, ObservableProperties):
             is_live=True,
         )
         params = JobParams(bounds, conditioning.positive, regions=job_regions)
-        params.workflow_kind = workflow_kind
+        # workflow_kind is set centrally in enqueue_jobs() (params.workflow_kind = input.kind)
         return input, params
 
     async def _generate_live(self, input: WorkflowInput, job_params: JobParams):
@@ -631,7 +633,7 @@ class DocumentModel(QObject, ObservableProperties):
             custom_input = CustomWorkflowInput(wf.root, params)
             metadata: dict[str, Any] = dict(self.custom.params)
             job_params = JobParams(bounds, self.custom.job_name, metadata=metadata)
-            job_params.workflow_kind = WorkflowKind.custom
+            # workflow_kind is set centrally in enqueue_jobs() (params.workflow_kind = input.kind)
 
             style_node = next(wf.find(type="ETN_KritaStyleAndPrompt"), None)
             if style_node is not None:
@@ -1751,8 +1753,8 @@ def _save_job_result(model: DocumentModel, job: Job | None, index: int):
     assert job is not None, "Cannot save result, invalid job id"
     assert len(job.results) > index, "Cannot save result, invalid result index"
     assert model.document.filename, "Cannot save result, document is not saved"
-    timestamp = job.timestamp.strftime("%Y%m%d-%H%M%S")
-    cur_timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    timestamp = job.timestamp.astimezone().strftime("%Y%m%d-%H%M%S")
+    cur_timestamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
     prompt = util.sanitize_prompt(job.params.name)
     path = Path(model.document.filename)
     name_template = (
@@ -1790,3 +1792,7 @@ def _save_job_result(model: DocumentModel, job: Job | None, index: int):
             quality = settings.save_image_quality_jpeg
 
         base_image.save(path, settings.save_image_format, quality)
+
+    if settings.server_mode is ServerMode.cloud:
+        xmp = create_ai_generated_xmp(job.params.workflow_kind)
+        base_image.write_xmp_metadata(path, xmp)
