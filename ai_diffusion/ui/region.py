@@ -14,7 +14,16 @@ from PyQt5.QtGui import (
     QPixmap,
     QResizeEvent,
 )
-from PyQt5.QtWidgets import QFrame, QHBoxLayout, QLabel, QMenu, QToolButton, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QMenu,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .. import eventloop
 from ..backend import ollama
@@ -204,6 +213,7 @@ class ActiveRegionWidget(QFrame):
         self._enhance_button.clicked.connect(partial(self._enhance, EnhanceTask.enhance))
         self._enhance_button.setVisible(settings.ollama_enabled)
         self._enhance_backup: str | None = None
+        self._last_instruction = ""
         self._enhance_running = False
         self._update_enhance_tooltip()
 
@@ -562,6 +572,8 @@ class ActiveRegionWidget(QFrame):
             partial(self._enhance, EnhanceTask.variations),
         )
         menu.addSeparator()
+        menu.addAction(_("Modify with instruction..."), self._ask_instruction)
+        menu.addSeparator()
         self._revert_action = menu.addAction(_("Revert"), self._revert_enhance)
         self._revert_action.setEnabled(False)
         return menu
@@ -578,7 +590,22 @@ class ActiveRegionWidget(QFrame):
             self._enhance_backup = None
             self._revert_action.setEnabled(False)
 
-    def _enhance(self, task: EnhanceTask):
+    def _ask_instruction(self):
+        """Ask for a free-form change to apply to the current prompt, eg. "make it
+        night", "add rain, remove the hat"."""
+        if self._enhance_running:
+            return
+        text, ok = QInputDialog.getMultiLineText(
+            self,
+            _("Modify Prompt"),
+            _("Describe the change to apply to the prompt:"),
+            self._last_instruction,
+        )
+        if ok and text.strip():
+            self._last_instruction = text.strip()
+            self._enhance(EnhanceTask.instruct, self._last_instruction)
+
+    def _enhance(self, task: EnhanceTask, instruction: str = ""):
         if self._enhance_running:
             return
         if not settings.ollama_model:
@@ -586,7 +613,7 @@ class ActiveRegionWidget(QFrame):
                 _("No language model selected. Configure one in Settings -> Prompt AI.")
             )
             return
-        eventloop.run(self._run_enhance(task))
+        eventloop.run(self._run_enhance(task, instruction))
 
     def _report_error(self, message: str):
         if model := root.active_model:
@@ -594,7 +621,7 @@ class ActiveRegionWidget(QFrame):
         else:
             log.error(message)
 
-    async def _run_enhance(self, task: EnhanceTask):
+    async def _run_enhance(self, task: EnhanceTask, instruction: str = ""):
         region = self.region
         model = root.active_model
         if region is None or model is None:
@@ -612,13 +639,18 @@ class ActiveRegionWidget(QFrame):
 
             protected = ollama.protect(original)
             count = max(2, settings.ollama_variation_count)
-            request = ollama.build_prompt(task, protected.text, count)
+            request = ollama.build_prompt(task, protected.text, count, instruction)
 
             if settings.ollama_free_comfy_vram:
                 if client := root.connection.client_if_connected:
                     await ollama.free_comfy_vram(client)
 
-            response = await ollama.generate(request, system=profile.system, model=profile.model)
+            response = await ollama.generate(
+                request,
+                system=profile.system,
+                model=profile.model,
+                temperature=ollama.temperature_for(task),
+            )
             if not response:
                 self._report_error(_("The language model returned an empty response"))
                 return

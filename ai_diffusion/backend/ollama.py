@@ -20,6 +20,7 @@ class EnhanceTask(Enum):
     rewrite = "rewrite"
     detail = "detail"
     variations = "variations"
+    instruct = "instruct"
 
 
 _task_instructions = {
@@ -35,6 +36,13 @@ _task_instructions = {
         "Add missing detail to the following prompt. Do not change or remove anything"
         " that is already there - only append what is missing (lighting, materials,"
         " camera, background)."
+    ),
+    EnhanceTask.instruct: (
+        "Apply the following change to the prompt below. Keep everything the change does"
+        " not concern exactly as it is, and answer with the complete modified prompt."
+        " Delete whatever contradicts the change instead of keeping both versions, and"
+        " never state what was removed - a removed thing is simply absent from the"
+        " answer.\n\nChange to apply: {instruction}"
     ),
     EnhanceTask.variations: (
         "Write {count} different variations of the following prompt. Vary pose, setting,"
@@ -57,8 +65,25 @@ async def list_models() -> list[str]:
     return sorted(m["name"] for m in models if m.get("name"))
 
 
+# Tasks which modify an existing prompt rather than inventing one. A high temperature
+# makes the model drift off and keep contradicting tags around, so it gets capped.
+_conservative_tasks = {EnhanceTask.instruct, EnhanceTask.detail}
+_conservative_temperature = 0.6
+
+
+def temperature_for(task: EnhanceTask) -> float:
+    if task in _conservative_tasks:
+        return min(settings.ollama_temperature, _conservative_temperature)
+    return settings.ollama_temperature
+
+
 async def generate(
-    prompt: str, *, system: str = "", model: str = "", timeout: float | None = None
+    prompt: str,
+    *,
+    system: str = "",
+    model: str = "",
+    temperature: float | None = None,
+    timeout: float | None = None,
 ) -> str:
     data = {
         "model": model or settings.ollama_model,
@@ -69,7 +94,7 @@ async def generate(
         "think": False,  # ignored by models without a thinking mode
         "keep_alive": settings.ollama_keep_alive,
         "options": {
-            "temperature": settings.ollama_temperature,
+            "temperature": settings.ollama_temperature if temperature is None else temperature,
             "num_predict": settings.ollama_max_tokens,
         },
     }
@@ -218,11 +243,12 @@ def _read_json(path: Path) -> dict | None:
         return None
 
 
-def build_prompt(task: EnhanceTask, prompt: str, count: int = 4) -> str:
-    instruction = _task_instructions[task].format(count=count)
+def build_prompt(task: EnhanceTask, prompt: str, count: int = 4, instruction: str = "") -> str:
+    task_text = _task_instructions[task].format(count=count, instruction=instruction)
     if not prompt.strip():
-        instruction = (
-            "The user did not provide a prompt. Invent an interesting image prompt from" " scratch."
-        )
-        return instruction
-    return f"{instruction}\n\nPrompt:\n{prompt}"
+        if task is EnhanceTask.instruct:
+            # nothing to modify - treat the instruction itself as the idea to write about
+            rewrite = _task_instructions[EnhanceTask.rewrite]
+            return f"{rewrite}\n\nPrompt:\n{instruction}"
+        return "The user did not provide a prompt. Invent an interesting image prompt from scratch."
+    return f"{task_text}\n\nPrompt:\n{prompt}"
