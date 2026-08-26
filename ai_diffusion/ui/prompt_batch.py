@@ -9,7 +9,6 @@ from PyQt5.QtCore import QSize
 from PyQt5.QtWidgets import (
     QCheckBox,
     QDialog,
-    QDialogButtonBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -57,9 +56,9 @@ class PromptBatchDialog(QDialog):
         self._cancelled = False
         self._protected = ollama.protect(region.positive)
 
-        self._variation_mode = QRadioButton(_("Variations of the current prompt"), self)
+        self._variation_mode = QRadioButton(_("Vary current prompt"), self)
         self._variation_mode.setChecked(bool(self._protected.text))
-        self._random_mode = QRadioButton(_("Random prompts for a theme"), self)
+        self._random_mode = QRadioButton(_("Random for a theme"), self)
         self._random_mode.setChecked(not self._protected.text)
         self._variation_mode.toggled.connect(self._update_base_label)
 
@@ -70,26 +69,44 @@ class PromptBatchDialog(QDialog):
         self._count = QSpinBox(self)
         self._count.setRange(2, 200)
         self._count.setValue(max(2, settings.ollama_variation_count))
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(8)
+        mode_row.addWidget(self._variation_mode)
+        mode_row.addWidget(self._random_mode)
+        mode_row.addStretch()
+
         count_row = QHBoxLayout()
-        count_row.addWidget(QLabel(_("Number of prompts") + ":", self))
+        count_row.addWidget(QLabel(_("Count") + ":", self))
         count_row.addWidget(self._count)
         count_row.addStretch()
 
-        self._as_group = QRadioButton(_("Insert as sequential group [[a|b|c]]"), self)
+        self._as_group = QRadioButton(_("Sequential group [[a|b|c]]"), self)
         self._as_group.setChecked(True)
-        self._as_file = QRadioButton(_("Save as wildcard file"), self)
+        self._as_file = QRadioButton(_("Wildcard file"), self)
         self._file_name = QLineEdit("ai/batch", self)
         self._file_name.setEnabled(False)
         self._as_file.toggled.connect(self._file_name.setEnabled)
+        output_row = QHBoxLayout()
+        output_row.setSpacing(8)
+        output_row.addWidget(self._as_group)
+        output_row.addWidget(self._as_file)
+        output_row.addStretch()
+
         file_row = QHBoxLayout()
         file_row.addSpacing(20)
         file_row.addWidget(QLabel("__", self))
         file_row.addWidget(self._file_name, 1)
         file_row.addWidget(QLabel("__", self))
 
-        self._set_batch_count = QCheckBox(_("Set batch count to the number of prompts"), self)
+        self._set_batch_count = QCheckBox(_("Set batch count"), self)
         self._set_batch_count.setChecked(True)
-        self._generate_after = QCheckBox(_("Start image generation when finished"), self)
+        self._generate_after = QCheckBox(_("Generate images when finished"), self)
+
+        check_row = QHBoxLayout()
+        check_row.setSpacing(8)
+        check_row.addWidget(self._set_batch_count)
+        check_row.addWidget(self._generate_after)
+        check_row.addStretch()
 
         self._progress = QProgressBar(self)
         self._progress.setVisible(False)
@@ -98,37 +115,35 @@ class PromptBatchDialog(QDialog):
 
         self._list = QListWidget(self)
         self._list.setAlternatingRowColors(True)
-        self._list.setMinimumHeight(120)
+        self._list.setMinimumHeight(110)
         self._list.setVisible(False)  # only takes up space once there are results
 
-        self._start_button = QPushButton(_("Generate Prompts"), self)
+        self._start_button = QPushButton(_("Generate"), self)
         self._start_button.clicked.connect(self._start_or_stop)
         self._apply_button = QPushButton(_("Apply"), self)
         self._apply_button.setEnabled(False)
         self._apply_button.clicked.connect(self._apply)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
-        buttons.rejected.connect(self.reject)
+        close_button = QPushButton(_("Close"), self)
+        close_button.clicked.connect(self.reject)
         button_row = QHBoxLayout()
+        button_row.setSpacing(4)
         button_row.addWidget(self._start_button)
         button_row.addWidget(self._apply_button)
         button_row.addStretch()
-        button_row.addWidget(buttons)
+        button_row.addWidget(close_button)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
-        layout.addWidget(self._variation_mode)
-        layout.addWidget(self._random_mode)
+        layout.addLayout(mode_row)
         layout.addWidget(self._base_label)
         layout.addWidget(self._base)
         layout.addLayout(count_row)
         layout.addSpacing(4)
-        layout.addWidget(self._as_group)
-        layout.addWidget(self._as_file)
+        layout.addLayout(output_row)
         layout.addLayout(file_row)
         layout.addSpacing(4)
-        layout.addWidget(self._set_batch_count)
-        layout.addWidget(self._generate_after)
+        layout.addLayout(check_row)
         layout.addWidget(self._progress)
         layout.addWidget(self._status)
         layout.addWidget(self._list, 1)
@@ -136,7 +151,9 @@ class PromptBatchDialog(QDialog):
         self.setLayout(layout)
 
         self._update_base_label()
-        self.resize(QSize(430, self.sizeHint().height()))
+        layout.activate()
+        self.adjustSize()
+        self.resize(QSize(min(self.width(), 360), min(self.height(), 260)))
         if window := parent.window():
             center = window.frameGeometry().center()
             self.move(center.x() - self.width() // 2, center.y() - self.height() // 2)
@@ -225,7 +242,7 @@ class PromptBatchDialog(QDialog):
         finally:
             self._running = False
             self._job = None
-            self._start_button.setText(_("Generate Prompts"))
+            self._start_button.setText(_("Generate"))
             self._progress.setVisible(False)
             self._apply_button.setEnabled(len(self._results) > 0)
             if self._results:

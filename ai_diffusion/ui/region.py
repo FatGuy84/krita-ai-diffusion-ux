@@ -18,12 +18,12 @@ from PyQt5.QtGui import (
 )
 from PyQt5.QtWidgets import (
     QDialog,
-    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
     QMenu,
     QPlainTextEdit,
+    QPushButton,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -794,8 +794,7 @@ class InstructionDialog(QDialog):
         self.setWindowTitle(_("Modify Prompt"))
         self.setModal(True)
 
-        label = QLabel(_("Describe the change to apply to the prompt:"), self)
-        label.setWordWrap(True)
+        label = QLabel(_("Change to apply:"), self)
 
         self._edit = QPlainTextEdit(text, self)
         self._edit.setTabChangesFocus(True)
@@ -803,19 +802,23 @@ class InstructionDialog(QDialog):
         self._edit.setFixedHeight(2 * line_height + 10)
         self._edit.selectAll()
 
-        hint = QLabel(_("Ctrl+Enter to apply"), self)
+        hint = QLabel(_("Ctrl+Enter"), self)
         hint.setStyleSheet(f"font-style: italic; color: {theme.grey};")
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        # plain buttons rather than QDialogButtonBox: the box reserves a wide minimum
+        # for its button area, which is what kept this dialog from opening small
+        ok_button = QPushButton(_("Apply"), self)
+        ok_button.setDefault(True)
+        ok_button.clicked.connect(self.accept)
+        cancel_button = QPushButton(_("Cancel"), self)
+        cancel_button.clicked.connect(self.reject)
 
         button_row = QHBoxLayout()
+        button_row.setSpacing(4)
         button_row.addWidget(hint)
         button_row.addStretch()
-        button_row.addWidget(buttons)
+        button_row.addWidget(ok_button)
+        button_row.addWidget(cancel_button)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(8, 8, 8, 8)
@@ -825,7 +828,9 @@ class InstructionDialog(QDialog):
         layout.addLayout(button_row)
         self.setLayout(layout)
 
-        self.resize(QSize(330, self.sizeHint().height()))
+        layout.activate()
+        self.adjustSize()
+        self.resize(QSize(min(self.width(), 300), min(self.height(), 130)))
         self._center_on_parent(parent)
 
     def _center_on_parent(self, parent: QWidget):
