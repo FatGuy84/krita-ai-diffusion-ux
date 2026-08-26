@@ -82,17 +82,28 @@ def temperature_for(task: EnhanceTask) -> float:
     return settings.ollama_temperature
 
 
-def _request_body(prompt: str, system: str, model: str, temperature: float | None, stream: bool):
+def _request_body(
+    prompt: str,
+    system: str,
+    model: str,
+    temperature: float | None,
+    stream: bool,
+    seed: int | None = None,
+    keep_alive: int | None = None,
+):
+    options: dict = {
+        "temperature": settings.ollama_temperature if temperature is None else temperature,
+        "num_predict": settings.ollama_max_tokens,
+    }
+    if seed is not None:
+        options["seed"] = seed
     data = {
         "model": model or settings.ollama_model,
         "prompt": prompt,
         "stream": stream,
         "think": False,  # ignored by models without a thinking mode
-        "keep_alive": settings.ollama_keep_alive,
-        "options": {
-            "temperature": settings.ollama_temperature if temperature is None else temperature,
-            "num_predict": settings.ollama_max_tokens,
-        },
+        "keep_alive": settings.ollama_keep_alive if keep_alive is None else keep_alive,
+        "options": options,
     }
     if system:  # without it the model keeps whatever SYSTEM its Modelfile defines
         data["system"] = system
@@ -139,8 +150,12 @@ class Generation:
         model: str = "",
         temperature: float | None = None,
         timeout: float | None = None,
+        seed: int | None = None,
+        keep_alive: int | None = None,
     ) -> str:
-        data = _request_body(prompt, system, model, temperature, stream=True)
+        self._text = ""
+        self._buffer = b""
+        data = _request_body(prompt, system, model, temperature, True, seed, keep_alive)
         request = QNetworkRequest(QUrl(f"{url()}/api/generate"))
         request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json")
         # applies to inactivity, not to the total duration - a slow model is fine as long
@@ -331,6 +346,40 @@ def _read_json(path: Path) -> dict | None:
     except Exception as e:
         log.error(f"Failed to read prompt profiles from {path}: {e}")
         return None
+
+
+class PoolMode(Enum):
+    """How a batch of prompts is produced before generating images."""
+
+    variation = "variation"  # variations of the prompt that is already there
+    random = "random"  # fresh scenes for a theme
+
+
+_pool_instructions = {
+    PoolMode.variation: (
+        "Write ONE variation of the prompt below. Vary pose, setting, lighting and camera,"
+        " but keep the same subject and style. Answer with the finished prompt only."
+    ),
+    PoolMode.random: (
+        "Write ONE image prompt for the theme below. Invent the scene freely - subject"
+        " details, setting, lighting and camera are yours to choose. Answer with the"
+        " finished prompt only."
+    ),
+}
+
+
+def build_pool_prompt(mode: PoolMode, base: str, avoid: list[str] | None = None) -> str:
+    label = "Prompt" if mode is PoolMode.variation else "Theme"
+    text = f"{_pool_instructions[mode]}\n\n{label}:\n{base}"
+    if avoid:
+        # Without this the model repeats itself almost verbatim across a batch, even
+        # with a different seed each time.
+        previous = "\n".join(f"- {a}" for a in avoid)
+        text += (
+            "\n\nYou already wrote the following. Write something clearly different"
+            f" this time:\n{previous}"
+        )
+    return text
 
 
 def build_prompt(task: EnhanceTask, prompt: str, count: int = 4, instruction: str = "") -> str:

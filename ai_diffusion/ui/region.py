@@ -587,6 +587,7 @@ class ActiveRegionWidget(QFrame):
         )
         menu.addSeparator()
         menu.addAction(_("Modify with instruction..."), self._ask_instruction)
+        menu.addAction(_("Prompt batch for generation..."), self._open_prompt_batch)
         menu.addSeparator()
         self._revert_action = menu.addAction(_("Revert"), self._revert_enhance)
         self._revert_action.setEnabled(False)
@@ -603,6 +604,18 @@ class ActiveRegionWidget(QFrame):
             self.region.positive = self._enhance_backup
             self._enhance_backup = None
             self._revert_action.setEnabled(False)
+
+    def _open_prompt_batch(self):
+        """Build a pool of prompts before generating, so a batch or a generate loop
+        runs through many different prompts instead of repeating one."""
+        from .prompt_batch import PromptBatchDialog
+
+        if self._enhance_running or self.region is None:
+            return
+        dialog = PromptBatchDialog(self.region, self)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _ask_instruction(self):
         """Ask for a free-form change to apply to the current prompt, eg. "make it
