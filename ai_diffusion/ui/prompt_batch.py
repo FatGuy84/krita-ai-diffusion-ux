@@ -61,12 +61,21 @@ class PromptBatchDialog(QDialog):
         self._variation_mode.setChecked(bool(self._protected.text))
         self._random_mode = QRadioButton(_("Random for a theme"), self)
         self._random_mode.setChecked(not self._protected.text)
-        self._variation_mode.toggled.connect(self._update_base_label)
+        self._terms_mode = QRadioButton(_("Term list"), self)
+        self._terms_mode.setToolTip(
+            _(
+                "Build a wildcard file of interchangeable options for one category,"
+                " eg. hairstyles, hair colors, poses, outfits"
+            )
+        )
+        self._variation_mode.toggled.connect(self._update_mode)
+        self._terms_mode.toggled.connect(self._update_mode)
         # radio buttons sharing a parent are auto-exclusive as one group - without
         # explicit groups, picking a mode would clear the output choice and vice versa
         self._mode_group = QButtonGroup(self)
         self._mode_group.addButton(self._variation_mode)
         self._mode_group.addButton(self._random_mode)
+        self._mode_group.addButton(self._terms_mode)
 
         self._base_label = QLabel(self)
         self._base = QPlainTextEdit(self._protected.text, self)
@@ -79,6 +88,7 @@ class PromptBatchDialog(QDialog):
         mode_row.setSpacing(8)
         mode_row.addWidget(self._variation_mode)
         mode_row.addWidget(self._random_mode)
+        mode_row.addWidget(self._terms_mode)
         mode_row.addStretch()
 
         count_row = QHBoxLayout()
@@ -159,7 +169,7 @@ class PromptBatchDialog(QDialog):
         layout.addLayout(button_row)
         self.setLayout(layout)
 
-        self._update_base_label()
+        self._update_mode()
         layout.activate()
         self.adjustSize()
         self.resize(QSize(min(self.width(), 360), min(self.height(), 260)))
@@ -167,14 +177,38 @@ class PromptBatchDialog(QDialog):
             center = window.frameGeometry().center()
             self.move(center.x() - self.width() // 2, center.y() - self.height() // 2)
 
-    def _update_base_label(self):
+    def _update_mode(self):
+        terms = self._terms_mode.isChecked()
         if self._variation_mode.isChecked():
             self._base_label.setText(_("Prompt to vary") + ":")
+        elif terms:
+            self._base_label.setText(_("Category") + ":")
+            self._base.setPlaceholderText(_("hairstyles / hair colors / poses / outfits"))
         else:
             self._base_label.setText(_("Theme or idea") + ":")
+        if terms:
+            # a term list belongs in a file - a 40 entry sequential group would turn the
+            # prompt into an unreadable wall of text
+            self._as_file.setChecked(True)
+            self._update_file_name()
+            # a handful of prompt variations is a sensible batch, a handful of hairstyles
+            # is not much of a wildcard list
+            self._count.setValue(max(self._count.value(), 20))
+        self._as_group.setEnabled(not terms)
+        # both only make sense when each entry is a whole prompt
+        self._set_batch_count.setEnabled(not terms)
+        self._generate_after.setEnabled(not terms)
+
+    def _update_file_name(self):
+        category = self._base.toPlainText().strip()
+        category = category.splitlines()[0] if category else ""
+        slug = _name_pattern.sub("-", category.lower()).strip("-")
+        self._file_name.setText(f"ai/{slug}" if slug else "ai/batch")
 
     @property
     def _mode(self):
+        if self._terms_mode.isChecked():
+            return PoolMode.terms
         return PoolMode.variation if self._variation_mode.isChecked() else PoolMode.random
 
     def _start_or_stop(self):
@@ -200,8 +234,10 @@ class PromptBatchDialog(QDialog):
         count = self._count.value()
         base = self._base.toPlainText().strip()
         if not base:
-            self._status.setText(_("Enter a prompt or a theme first"))
+            self._status.setText(_("Enter a prompt, a theme or a category first"))
             return
+        if self._mode is PoolMode.terms:
+            self._update_file_name()
 
         self._running = True
         self._cancelled = False
@@ -218,29 +254,10 @@ class PromptBatchDialog(QDialog):
         started = time.monotonic()
 
         try:
-            for i in range(count):
-                if self._cancelled:
-                    break
-                # The model is kept loaded across the whole batch: loading it costs about
-                # as much as writing one prompt, and it is unloaded again at the end.
-                last = i == count - 1
-                request = ollama.build_pool_prompt(self._mode, base, self._results[-3:])
-                self._job = ollama.Generation()
-                self._status.setText(
-                    _("Writing prompt") + f" {i + 1}/{count} - {time.monotonic() - started:.0f}s"
-                )
-                text = await self._job.run(
-                    request,
-                    system=profile.system,
-                    model=profile.model,
-                    seed=random.randint(0, 2**31 - 1),
-                    keep_alive=0 if last else 300,
-                )
-                text = _first_prompt(text)
-                if text and text not in self._results:
-                    self._results.append(text)
-                    QListWidgetItem(text, self._list)
-                self._progress.setValue(i + 1)
+            if self._mode is PoolMode.terms:
+                await self._run_terms(profile, base, count, started)
+            else:
+                await self._run_prompts(profile, base, count, started)
         except asyncio.CancelledError:
             pass  # stopped by the user
         except NetworkError as e:
@@ -256,12 +273,80 @@ class PromptBatchDialog(QDialog):
             self._apply_button.setEnabled(len(self._results) > 0)
             if self._results:
                 elapsed = time.monotonic() - started
-                self._status.setText(f"{len(self._results)} " + _("prompts") + f" - {elapsed:.0f}s")
+                label = _("entries") if self._mode is PoolMode.terms else _("prompts")
+                self._status.setText(f"{len(self._results)} {label} - {elapsed:.0f}s")
             if not self._cancelled and self._results:
                 self._apply()
 
+    async def _run_prompts(self, profile: ollama.Profile, base: str, count: int, started: float):
+        for i in range(count):
+            if self._cancelled:
+                break
+            # The model is kept loaded across the whole batch: loading it costs about as
+            # much as writing one prompt, and it is unloaded again at the end.
+            last = i == count - 1
+            request = ollama.build_pool_prompt(self._mode, base, self._results[-3:])
+            self._job = ollama.Generation()
+            self._status.setText(
+                _("Writing prompt") + f" {i + 1}/{count} - {time.monotonic() - started:.0f}s"
+            )
+            text = await self._job.run(
+                request,
+                system=profile.system,
+                model=profile.model,
+                seed=random.randint(0, 2**31 - 1),
+                keep_alive=0 if last else 300,
+            )
+            text = _first_prompt(text)
+            if text and text not in self._results:
+                self._results.append(text)
+                QListWidgetItem(text, self._list)
+            self._progress.setValue(i + 1)
+
+    async def _run_terms(self, profile: ollama.Profile, category: str, count: int, started: float):
+        """Term lists are written in rounds rather than one call per entry: entries are a
+        few words each, so one call at a time would spend all the time on model overhead.
+        Rounds repeat until the target count is reached; duplicates are dropped, and a
+        model that only repeats itself ends the run instead of looping forever."""
+        seen = {ollama.normalize_term(t) for t in self._results}
+        empty_rounds = 0
+        while len(self._results) < count and not self._cancelled and empty_rounds < 3:
+            missing = count - len(self._results)
+            self._job = ollama.Generation()
+            self._status.setText(
+                _("Writing options")
+                + f" {len(self._results)}/{count} - {time.monotonic() - started:.0f}s"
+            )
+            text = await self._job.run(
+                ollama.build_terms_prompt(category, min(max(missing, 5), 25), self._results),
+                system=ollama.terms_system_prompt(),
+                model=profile.model,
+                seed=random.randint(0, 2**31 - 1),
+                keep_alive=300,
+            )
+            added = 0
+            for term in ollama.parse_terms(text):
+                key = ollama.normalize_term(term)
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                self._results.append(term)
+                QListWidgetItem(term, self._list)
+                added += 1
+                if len(self._results) >= count:
+                    break
+            self._progress.setValue(len(self._results))
+            empty_rounds = 0 if added else empty_rounds + 1
+        await ollama.unload()
+
     def _apply(self):
         if not self._results:
+            return
+        if self._mode is PoolMode.terms:
+            if reference := self._write_wildcard_file():
+                # a term list replaces nothing - it becomes one more option in the prompt
+                current = self._region.positive.rstrip(" ,")
+                self._region.positive = f"{current}, {reference}" if current else reference
             return
         if self._as_file.isChecked():
             prompt = self._write_wildcard_file()
@@ -294,7 +379,8 @@ class PromptBatchDialog(QDialog):
             self._status.setText(_("Could not write") + f" {path}: {e}")
             return None
         WildcardLibrary.instance().reload()
-        self._status.setText(_("Saved") + f" {len(self._results)} " + _("prompts") + f" - {path}")
+        label = _("entries") if self._mode is PoolMode.terms else _("prompts")
+        self._status.setText(_("Saved") + f" {len(self._results)} {label} - {path}")
         return f"__{name}__"
 
     def closeEvent(self, a0):

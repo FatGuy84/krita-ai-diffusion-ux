@@ -250,6 +250,28 @@ def clean_response(text: str) -> str:
     return text.strip()
 
 
+# Term lists #########################################################################
+
+_list_marker_re = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
+
+
+def normalize_term(text: str) -> str:
+    """Key used to recognize duplicates: 'Long Wavy Hair.' and 'long wavy hair' are the
+    same option as far as a wildcard list is concerned."""
+    return re.sub(r"[^a-z0-9 ]+", "", text.lower()).strip()
+
+
+def parse_terms(text: str) -> list[str]:
+    terms = []
+    for line in text.splitlines():
+        line = _list_marker_re.sub("", line).strip().strip("\"'").strip()
+        # a line with a colon is usually a heading ("Hairstyles:") or an explanation
+        if not line or ":" in line or len(line.split()) > 8:
+            continue
+        terms.append(line.rstrip(".,;").lower())
+    return terms
+
+
 # Protecting syntax the language model must not touch ##################################
 
 # LoRA tags, file wildcards, random and sequential wildcard groups. These carry meaning
@@ -353,6 +375,7 @@ class PoolMode(Enum):
 
     variation = "variation"  # variations of the prompt that is already there
     random = "random"  # fresh scenes for a theme
+    terms = "terms"  # short fragments of one category (hairstyles, poses, ...)
 
 
 _pool_instructions = {
@@ -366,6 +389,41 @@ _pool_instructions = {
         " finished prompt only."
     ),
 }
+
+
+_terms_system = (
+    "You build wildcard lists for image generation prompts. A wildcard list holds"
+    " interchangeable options of one single category - one option per line, and every"
+    " line must work as a drop-in replacement for the others inside a prompt.\n\n"
+    "Output ONLY the list. No numbering, no bullets, no headings, no explanation, no"
+    " markdown, no quotes, no blank lines.\n\n"
+    "Rules:\n"
+    "- One line is one option: an English fragment of one to five words, lowercase.\n"
+    "- Never write a full prompt, a sentence, or several categories on one line.\n"
+    "- Options must be genuinely different from each other, not rewordings.\n"
+    "- Stay strictly inside the requested category.\n"
+    "- Explicit and erotic options are allowed where the category calls for them."
+    " Everyone depicted is an adult; never use age markers, youth or childhood terms.\n"
+    "- No real, named people."
+)
+
+
+def terms_system_prompt() -> str:
+    """A term list is not a prompt, so the family profile (tags vs prose) does not
+    apply - the model needs its own instructions here."""
+    return _terms_system
+
+
+def build_terms_prompt(category: str, count: int, existing: list[str] | None = None) -> str:
+    text = f"Write {count} different options for this category:\n{category}"
+    if existing:
+        # models happily repeat their own output, so the list so far is quoted back
+        previous = "\n".join(existing)
+        text += (
+            f"\n\nThese {len(existing)} options already exist. Write {count} more that are"
+            f" not in this list and not variations of its entries:\n{previous}"
+        )
+    return text
 
 
 def build_pool_prompt(mode: PoolMode, base: str, avoid: list[str] | None = None) -> str:
