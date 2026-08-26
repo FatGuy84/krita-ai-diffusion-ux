@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from enum import Enum
 from functools import partial
 
-from PyQt5.QtCore import QEvent, QMetaObject, QObject, QPoint, QSize, Qt, pyqtSignal
+from PyQt5.QtCore import QEvent, QMetaObject, QObject, QPoint, QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import (
     QFontMetrics,
     QGuiApplication,
@@ -15,11 +17,13 @@ from PyQt5.QtGui import (
     QResizeEvent,
 )
 from PyQt5.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QMenu,
+    QPlainTextEdit,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -210,16 +214,26 @@ class ActiveRegionWidget(QFrame):
         self._enhance_button.setAutoRaise(True)
         self._enhance_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._enhance_button.setMenu(self._create_enhance_menu())
-        self._enhance_button.clicked.connect(partial(self._enhance, EnhanceTask.enhance))
+        self._enhance_button.clicked.connect(self._enhance_clicked)
         self._enhance_button.setVisible(settings.ollama_enabled)
         self._enhance_backup: str | None = None
         self._last_instruction = ""
         self._enhance_running = False
+        self._enhance_job: ollama.Generation | None = None
+        self._enhance_started = 0.0
         self._update_enhance_tooltip()
+
+        self._enhance_progress = QLabel(self)
+        self._enhance_progress.setVisible(False)
+        self._enhance_progress.setStyleSheet(f"font-style: italic; color: {theme.grey};")
+        self._enhance_timer = QTimer(self)
+        self._enhance_timer.setInterval(200)
+        self._enhance_timer.timeout.connect(self._update_enhance_progress)
 
         prompt_tools_layout = QHBoxLayout()
         prompt_tools_layout.setContentsMargins(0, 0, 0, 0)
         prompt_tools_layout.setSpacing(2)
+        prompt_tools_layout.addWidget(self._enhance_progress, 1)
         prompt_tools_layout.addStretch()
         prompt_tools_layout.addWidget(self._enhance_button)
         prompt_tools_layout.addWidget(self._wildcard_browse_button)
@@ -595,15 +609,46 @@ class ActiveRegionWidget(QFrame):
         night", "add rain, remove the hat"."""
         if self._enhance_running:
             return
-        text, ok = QInputDialog.getMultiLineText(
-            self,
-            _("Modify Prompt"),
-            _("Describe the change to apply to the prompt:"),
-            self._last_instruction,
-        )
-        if ok and text.strip():
-            self._last_instruction = text.strip()
+        dialog = InstructionDialog(self._last_instruction, self)
+        if dialog.exec_() == QDialog.DialogCode.Accepted and dialog.text:
+            self._last_instruction = dialog.text
             self._enhance(EnhanceTask.instruct, self._last_instruction)
+
+    def _enhance_clicked(self):
+        if self._enhance_running:
+            self._cancel_enhance()
+        else:
+            self._enhance(EnhanceTask.enhance)
+
+    def _cancel_enhance(self):
+        if self._enhance_job is not None:
+            self._enhance_job.cancel()
+
+    def _begin_enhance_progress(self, task: EnhanceTask):
+        self._enhance_started = time.monotonic()
+        self._enhance_button.setIcon(theme.icon("cancel"))
+        self._enhance_button.setText(_("Stop"))
+        self._enhance_button.setToolTip(_("Stop the running prompt generation"))
+        self._enhance_progress.setVisible(True)
+        self._enhance_timer.start()
+        self._update_enhance_progress()
+
+    def _end_enhance_progress(self):
+        self._enhance_timer.stop()
+        self._enhance_progress.setVisible(False)
+        self._enhance_button.setIcon(theme.icon("enhance"))
+        self._enhance_button.setText(_("Enhance"))
+        self._update_enhance_tooltip()
+
+    def _update_enhance_progress(self):
+        elapsed = time.monotonic() - self._enhance_started
+        words = len(self._enhance_job.text.split()) if self._enhance_job else 0
+        text = _("Writing prompt...") + f" {elapsed:.0f}s"
+        if words > 0:
+            text += f" - {words} " + _("words")
+        elif elapsed > 3:  # nothing yet: the model is most likely still loading into VRAM
+            text += " - " + _("loading model")
+        theme.set_text_clipped(self._enhance_progress, text)
 
     def _enhance(self, task: EnhanceTask, instruction: str = ""):
         if self._enhance_running:
@@ -628,7 +673,7 @@ class ActiveRegionWidget(QFrame):
             return
 
         self._enhance_running = True
-        self._enhance_button.setEnabled(False)
+        self._begin_enhance_progress(task)
         original = region.positive
         try:
             family = model.active_style.effective_family(model.arch)
@@ -645,7 +690,8 @@ class ActiveRegionWidget(QFrame):
                 if client := root.connection.client_if_connected:
                     await ollama.free_comfy_vram(client)
 
-            response = await ollama.generate(
+            self._enhance_job = ollama.Generation()
+            response = await self._enhance_job.run(
                 request,
                 system=profile.system,
                 model=profile.model,
@@ -672,6 +718,8 @@ class ActiveRegionWidget(QFrame):
                 region.positive = protected.restore(result)
                 self._enhance_backup = original
                 self._revert_action.setEnabled(True)
+        except asyncio.CancelledError:
+            pass  # stopped by the user
         except NetworkError as e:
             self._report_error(_("Could not reach Ollama") + f" ({ollama.url()}): {e}")
         except Exception as e:
@@ -679,7 +727,8 @@ class ActiveRegionWidget(QFrame):
             self._report_error(_("Prompt enhancement failed") + f": {e}")
         finally:
             self._enhance_running = False
-            self._enhance_button.setEnabled(True)
+            self._enhance_job = None
+            self._end_enhance_progress()
 
     def _open_lora_picker(self):
         if self._lora_dialog is None:
@@ -721,6 +770,66 @@ class ActiveRegionWidget(QFrame):
         elif a1 and a1.type() == QEvent.Type.FocusOut:
             self.setStyleSheet(self._style_base)
         return False
+
+
+class InstructionDialog(QDialog):
+    """Small prompt for a free-form modification of the current text prompt. Kept
+    deliberately compact: it is opened often and holds one short sentence."""
+
+    def __init__(self, text: str, parent: QWidget):
+        super().__init__(parent)
+        self.setWindowTitle(_("Modify Prompt"))
+        self.setModal(True)
+
+        label = QLabel(_("Describe the change to apply to the prompt:"), self)
+        label.setWordWrap(True)
+
+        self._edit = QPlainTextEdit(text, self)
+        self._edit.setTabChangesFocus(True)
+        line_height = QFontMetrics(self._edit.font()).lineSpacing()
+        self._edit.setFixedHeight(3 * line_height + 12)
+        self._edit.selectAll()
+
+        hint = QLabel(_("Ctrl+Enter to apply"), self)
+        hint.setStyleSheet(f"font-style: italic; color: {theme.grey};")
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        button_row = QHBoxLayout()
+        button_row.addWidget(hint)
+        button_row.addStretch()
+        button_row.addWidget(buttons)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.addWidget(label)
+        layout.addWidget(self._edit)
+        layout.addLayout(button_row)
+        self.setLayout(layout)
+
+        self.resize(QSize(420, self.sizeHint().height()))
+        self._center_on_parent(parent)
+
+    def _center_on_parent(self, parent: QWidget):
+        window = parent.window()
+        if window is not None:
+            center = window.frameGeometry().center()
+            self.move(center - QPoint(self.width() // 2, self.height() // 2))
+
+    def keyPressEvent(self, a0):
+        ctrl = a0 is not None and a0.modifiers() & Qt.KeyboardModifier.ControlModifier
+        if ctrl and a0 is not None and a0.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.accept()
+        else:
+            super().keyPressEvent(a0)
+
+    @property
+    def text(self):
+        return self._edit.toPlainText().strip()
 
 
 class RegionPromptWidget(QWidget):

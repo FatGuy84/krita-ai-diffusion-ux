@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+
+from PyQt5.QtCore import QByteArray, QUrl
+from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from ..settings import settings
 from ..util import client_logger as log, plugin_dir, user_data_dir
@@ -77,20 +82,11 @@ def temperature_for(task: EnhanceTask) -> float:
     return settings.ollama_temperature
 
 
-async def generate(
-    prompt: str,
-    *,
-    system: str = "",
-    model: str = "",
-    temperature: float | None = None,
-    timeout: float | None = None,
-) -> str:
+def _request_body(prompt: str, system: str, model: str, temperature: float | None, stream: bool):
     data = {
         "model": model or settings.ollama_model,
         "prompt": prompt,
-        # The reply is consumed as a single JSON document - streaming would produce
-        # newline-delimited JSON which the request manager cannot parse.
-        "stream": False,
+        "stream": stream,
         "think": False,  # ignored by models without a thinking mode
         "keep_alive": settings.ollama_keep_alive,
         "options": {
@@ -100,9 +96,103 @@ async def generate(
     }
     if system:  # without it the model keeps whatever SYSTEM its Modelfile defines
         data["system"] = system
+    return data
+
+
+async def generate(
+    prompt: str,
+    *,
+    system: str = "",
+    model: str = "",
+    temperature: float | None = None,
+    timeout: float | None = None,
+) -> str:
+    # The reply is consumed as a single JSON document - streaming would produce
+    # newline-delimited JSON which the request manager cannot parse.
+    data = _request_body(prompt, system, model, temperature, stream=False)
     timeout = timeout or settings.ollama_timeout
     result = await _requests.http("POST", f"{url()}/api/generate", data, timeout=timeout)
     return clean_response(result.get("response", ""))
+
+
+class Generation:
+    """A streaming /api/generate call. Ollama sends one JSON document per token, so
+    progress can be reported while the model is still writing."""
+
+    def __init__(self, on_progress: Callable[[str], None] | None = None):
+        self._net = QNetworkAccessManager()
+        self._reply: QNetworkReply | None = None
+        self._buffer = b""
+        self._text = ""
+        self._on_progress = on_progress
+        self._future: asyncio.Future[str] | None = None
+
+    @property
+    def text(self):
+        return self._text
+
+    async def run(
+        self,
+        prompt: str,
+        *,
+        system: str = "",
+        model: str = "",
+        temperature: float | None = None,
+        timeout: float | None = None,
+    ) -> str:
+        data = _request_body(prompt, system, model, temperature, stream=True)
+        request = QNetworkRequest(QUrl(f"{url()}/api/generate"))
+        request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json")
+        # applies to inactivity, not to the total duration - a slow model is fine as long
+        # as it keeps emitting tokens
+        request.setTransferTimeout(int((timeout or settings.ollama_timeout) * 1000))
+
+        self._future = asyncio.get_running_loop().create_future()
+        reply = self._net.post(request, QByteArray(json.dumps(data).encode("utf-8")))
+        assert reply is not None, "Failed to start Ollama request"
+        self._reply = reply
+        reply.readyRead.connect(self._read)
+        reply.finished.connect(self._finish)
+        return await self._future
+
+    def cancel(self):
+        if self._reply is not None and self._reply.isRunning():
+            self._reply.abort()
+
+    def _read(self):
+        if self._reply is None:
+            return
+        self._buffer += self._reply.readAll().data()
+        *lines, self._buffer = self._buffer.split(b"\n")
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                chunk = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # partial or unexpected line, the next read may complete it
+            if error := chunk.get("error"):
+                # Ollama reports model-level failures (unknown model, out of memory) in
+                # the stream itself rather than as an HTTP error
+                if self._future is not None and not self._future.done():
+                    self._future.set_exception(NetworkError(0, str(error), url()))
+                self.cancel()
+                return
+            self._text += chunk.get("response", "")
+        if self._on_progress is not None:
+            self._on_progress(self._text)
+
+    def _finish(self):
+        reply, self._reply = self._reply, None
+        if reply is None or self._future is None or self._future.done():
+            return
+        if reply.error() == QNetworkReply.NetworkError.OperationCanceledError:
+            self._future.cancel()
+        elif reply.error() != QNetworkReply.NetworkError.NoError:
+            self._future.set_exception(NetworkError.from_reply(reply))
+        else:
+            self._future.set_result(clean_response(self._text))
+        reply.deleteLater()
 
 
 async def unload():
