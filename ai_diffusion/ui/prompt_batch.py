@@ -7,6 +7,7 @@ import time
 
 from PyQt5.QtCore import QSize
 from PyQt5.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QDialog,
     QHBoxLayout,
@@ -61,6 +62,11 @@ class PromptBatchDialog(QDialog):
         self._random_mode = QRadioButton(_("Random for a theme"), self)
         self._random_mode.setChecked(not self._protected.text)
         self._variation_mode.toggled.connect(self._update_base_label)
+        # radio buttons sharing a parent are auto-exclusive as one group - without
+        # explicit groups, picking a mode would clear the output choice and vice versa
+        self._mode_group = QButtonGroup(self)
+        self._mode_group.addButton(self._variation_mode)
+        self._mode_group.addButton(self._random_mode)
 
         self._base_label = QLabel(self)
         self._base = QPlainTextEdit(self._protected.text, self)
@@ -86,6 +92,9 @@ class PromptBatchDialog(QDialog):
         self._file_name = QLineEdit("ai/batch", self)
         self._file_name.setEnabled(False)
         self._as_file.toggled.connect(self._file_name.setEnabled)
+        self._output_group = QButtonGroup(self)
+        self._output_group.addButton(self._as_group)
+        self._output_group.addButton(self._as_file)
         output_row = QHBoxLayout()
         output_row.setSpacing(8)
         output_row.addWidget(self._as_group)
