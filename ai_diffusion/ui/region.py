@@ -800,7 +800,7 @@ class InstructionDialog(QDialog):
         self._edit = QPlainTextEdit(text, self)
         self._edit.setTabChangesFocus(True)
         line_height = QFontMetrics(self._edit.font()).lineSpacing()
-        self._edit.setFixedHeight(3 * line_height + 12)
+        self._edit.setFixedHeight(2 * line_height + 10)
         self._edit.selectAll()
 
         hint = QLabel(_("Ctrl+Enter to apply"), self)
@@ -818,13 +818,14 @@ class InstructionDialog(QDialog):
         button_row.addWidget(buttons)
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
         layout.addWidget(label)
         layout.addWidget(self._edit)
         layout.addLayout(button_row)
         self.setLayout(layout)
 
-        self.resize(QSize(420, self.sizeHint().height()))
+        self.resize(QSize(330, self.sizeHint().height()))
         self._center_on_parent(parent)
 
     def _center_on_parent(self, parent: QWidget):

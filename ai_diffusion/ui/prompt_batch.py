@@ -65,7 +65,7 @@ class PromptBatchDialog(QDialog):
 
         self._base_label = QLabel(self)
         self._base = QPlainTextEdit(self._protected.text, self)
-        self._base.setFixedHeight(4 * self.fontMetrics().lineSpacing() + 12)
+        self._base.setFixedHeight(3 * self.fontMetrics().lineSpacing() + 10)
 
         self._count = QSpinBox(self)
         self._count.setRange(2, 200)
@@ -98,7 +98,8 @@ class PromptBatchDialog(QDialog):
 
         self._list = QListWidget(self)
         self._list.setAlternatingRowColors(True)
-        self._list.setVisible(False)
+        self._list.setMinimumHeight(120)
+        self._list.setVisible(False)  # only takes up space once there are results
 
         self._start_button = QPushButton(_("Generate Prompts"), self)
         self._start_button.clicked.connect(self._start_or_stop)
@@ -114,6 +115,8 @@ class PromptBatchDialog(QDialog):
         button_row.addWidget(buttons)
 
         layout = QVBoxLayout()
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
         layout.addWidget(self._variation_mode)
         layout.addWidget(self._random_mode)
         layout.addWidget(self._base_label)
@@ -133,7 +136,7 @@ class PromptBatchDialog(QDialog):
         self.setLayout(layout)
 
         self._update_base_label()
-        self.resize(QSize(560, 480))
+        self.resize(QSize(430, self.sizeHint().height()))
         if window := parent.window():
             center = window.frameGeometry().center()
             self.move(center.x() - self.width() // 2, center.y() - self.height() // 2)
@@ -178,7 +181,9 @@ class PromptBatchDialog(QDialog):
         self._cancelled = False
         self._results = []
         self._list.clear()
-        self._list.setVisible(True)
+        if not self._list.isVisible():  # make room for it instead of squeezing the form
+            self._list.setVisible(True)
+            self.resize(self.width(), self.height() + self._list.minimumHeight() + 8)
         self._apply_button.setEnabled(False)
         self._start_button.setText(_("Stop"))
         self._progress.setVisible(True)
