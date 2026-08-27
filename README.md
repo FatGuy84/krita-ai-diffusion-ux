@@ -319,6 +319,11 @@ after installing new models to force a re-scan.
   separate entries: Apply/Copy × raw/evaluated prompt.
 * **Copy Image to Clipboard**: puts the generated image itself on the clipboard,
   at full resolution, for pasting into another application.
+* **Keyboard shortcuts** while the history has focus, all of them listed next to
+  their entry in the context menu: `Enter` apply to canvas, `Space` toggle
+  selection, `F` favorite, `0`-`5` rating, `S` apply style, `P` apply prompt,
+  `R` save as recipe, `Ctrl+C` copy image, `Ctrl+Shift+C` copy evaluated prompt,
+  `Ctrl+S` save image, `Del` discard.
 * **Apply Style / Strength / Seed**: these entries take the settings an image was
   generated with and make them current. Upstream calls them "Copy Style" and so
   on, which reads like they go to the clipboard — they never did. Apply Style is

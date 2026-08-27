@@ -604,11 +604,29 @@ class HistoryWidget(QListWidget):
 
     def event(self, e: QEvent | None):
         assert e is not None
-        # Disambiguate shortcut events which Krita overrides
+        # Disambiguate shortcut events which Krita overrides. Everything reachable
+        # from a key is also in the context menu, which shows the key next to it -
+        # these are not QAction shortcuts, so the menu is the only place to find them.
         if e.type() == QEvent.Type.ShortcutOverride:
             assert isinstance(e, QKeyEvent)
+            ctrl = bool(e.modifiers() & Qt.KeyboardModifier.ControlModifier)
+            shift = bool(e.modifiers() & Qt.KeyboardModifier.ShiftModifier)
             if e.matches(QKeySequence.StandardKey.Delete):
                 self._discard_image(confirm=False)
+                e.accept()
+            elif ctrl and shift and e.key() == Qt.Key.Key_C:
+                self._copy_prompt_evaluated_to_clipboard()
+                e.accept()
+            elif ctrl and e.key() == Qt.Key.Key_C:
+                self._copy_image_to_clipboard()
+                e.accept()
+            elif ctrl and e.key() == Qt.Key.Key_S:
+                self._save_image()
+                e.accept()
+            elif ctrl:
+                return super().event(e)  # leave other Ctrl combinations to Krita
+            elif e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._activate_selection()
                 e.accept()
             elif e.key() == Qt.Key.Key_Space:
                 self._toggle_selection()
@@ -616,7 +634,16 @@ class HistoryWidget(QListWidget):
             elif e.key() == Qt.Key.Key_F:
                 self._toggle_favorite()
                 e.accept()
-            elif Qt.Key.Key_1 <= e.key() <= Qt.Key.Key_5:
+            elif e.key() == Qt.Key.Key_S:
+                self._apply_style()
+                e.accept()
+            elif e.key() == Qt.Key.Key_P:
+                self._apply_prompt_to_field()
+                e.accept()
+            elif e.key() == Qt.Key.Key_R:
+                self._save_as_recipe()
+                e.accept()
+            elif Qt.Key.Key_0 <= e.key() <= Qt.Key.Key_5:
                 self._set_selected_rating(e.key() - Qt.Key.Key_0)
                 e.accept()
         return super().event(e)
@@ -670,11 +697,17 @@ class HistoryWidget(QListWidget):
         elif item is not None:
             job = self._model.jobs.find(self._item_data(item).job)
             menu = QMenu(self)
-            menu.addAction(_("Apply Prompt to Field"), self._apply_prompt_to_field)
-            menu.addAction(_("Apply Prompt (Evaluated) to Field"), self._apply_prompt_evaluated_to_field)
+            # Shortcut hints go into every entry that has one (after a tab, which Qt
+            # right-aligns): the keys are handled in event() rather than by QAction,
+            # so without the hint there is nothing to discover them from.
+            menu.addAction(_("Apply to Canvas") + "\tEnter", self._activate_selection)
+            menu.addAction(_("Apply Prompt to Field") + "\tP", self._apply_prompt_to_field)
+            menu.addAction(
+                _("Apply Prompt (Evaluated) to Field"), self._apply_prompt_evaluated_to_field
+            )
             # "Apply" here means the current settings, not the clipboard - these three
             # set the style, strength and seed the image was generated with
-            style_action = ensure(menu.addAction(_("Apply Style"), self._apply_style))
+            style_action = ensure(menu.addAction(_("Apply Style") + "\tS", self._apply_style))
             style_action.setToolTip(_("Select the style this image was generated with"))
             if job is None or Styles.list().find(job.params.style) is None:
                 style_action.setEnabled(False)
@@ -682,9 +715,12 @@ class HistoryWidget(QListWidget):
             menu.addAction(_("Apply Strength"), self._apply_strength)
             menu.addAction(_("Apply Seed"), self._apply_seed)
             menu.addSeparator()
+            menu.addAction(_("Copy Image to Clipboard") + "\tCtrl+C", self._copy_image_to_clipboard)
             menu.addAction(_("Copy Prompt to Clipboard"), self._copy_prompt_to_clipboard)
-            menu.addAction(_("Copy Prompt (Evaluated) to Clipboard"), self._copy_prompt_evaluated_to_clipboard)
-            menu.addAction(_("Copy Image to Clipboard"), self._copy_image_to_clipboard)
+            menu.addAction(
+                _("Copy Prompt (Evaluated) to Clipboard") + "	Ctrl+Shift+C",
+                self._copy_prompt_evaluated_to_clipboard,
+            )
             menu.addAction(_("Info to Clipboard"), self._info_to_clipboard)
             menu.addSeparator()
             __, index = self.item_info(item)
@@ -695,16 +731,20 @@ class HistoryWidget(QListWidget):
             rating_menu = menu.addMenu(_("Set Rating"))
             for stars in range(1, 6):
                 label = "★" * stars + "☆" * (5 - stars)
-                action = ensure(rating_menu.addAction(label + f"\t{stars}", self._make_rating_setter(stars)))
+                action = ensure(
+                    rating_menu.addAction(label + f"\t{stars}", self._make_rating_setter(stars))
+                )
                 action.setCheckable(True)
                 action.setChecked(stars == current_rating)
-            if current_rating > 0:
-                rating_menu.addSeparator()
-                rating_menu.addAction(_("Clear Rating"), self._make_rating_setter(0))
+            rating_menu.addSeparator()
+            clear_rating = ensure(
+                rating_menu.addAction(_("Clear Rating") + "\t0", self._make_rating_setter(0))
+            )
+            clear_rating.setEnabled(current_rating > 0)
             menu.addSeparator()
             menu.addAction(_("Save to Eagle"), self._save_to_eagle)
-            menu.addAction(_("Save as Recipe"), self._save_as_recipe)
-            save_action = ensure(menu.addAction(_("Save Image"), self._save_image))
+            menu.addAction(_("Save as Recipe") + "\tR", self._save_as_recipe)
+            save_action = ensure(menu.addAction(_("Save Image") + "\tCtrl+S", self._save_image))
             if self._model.document.filename == "":
                 tt = _(
                     "Save as separate image to the same folder as the document.\nMust save the document first!"
@@ -712,8 +752,11 @@ class HistoryWidget(QListWidget):
                 save_action.setEnabled(False)
                 save_action.setToolTip(tt)
                 menu.setToolTipsVisible(True)
-            menu.addAction(_("Discard Image"), self._discard_image)
+            # via lambda: QAction.triggered passes its checked flag as the first
+            # argument, which would silently turn the confirmation prompt off
+            menu.addAction(_("Discard Image") + "\tDel", lambda: self._discard_image())
             menu.addSeparator()
+            menu.addAction(_("Toggle Selection") + "\tSpace", self._toggle_selection)
             menu.addAction(_("Clear History"), self._clear_all)
             menu.exec(self.mapToGlobal(pos))
 
