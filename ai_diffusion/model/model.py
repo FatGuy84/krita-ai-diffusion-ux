@@ -146,7 +146,8 @@ class DocumentModel(QObject, ObservableProperties):
     batch_count = Property(1, persist=True)
     loop_generate = Property(False, setter="set_loop_generate")
     seed = Property(0, persist=True)
-    fixed_seed = Property(False, persist=True)
+    fixed_seed = Property(False, setter="set_fixed_seed", persist=True)
+    seed_increment = Property(False, setter="set_seed_increment", persist=True)
     resolution_multiplier = Property(1.0, persist=True)
     queue_mode = Property(QueueMode.back, persist=True)
     translation_enabled = Property(True, persist=True)
@@ -164,6 +165,7 @@ class DocumentModel(QObject, ObservableProperties):
     loop_generate_changed = pyqtSignal(bool)
     seed_changed = pyqtSignal(int)
     fixed_seed_changed = pyqtSignal(bool)
+    seed_increment_changed = pyqtSignal(bool)
     resolution_multiplier_changed = pyqtSignal(float)
     queue_mode_changed = pyqtSignal(QueueMode)
     translation_enabled_changed = pyqtSignal(bool)
@@ -224,7 +226,9 @@ class DocumentModel(QObject, ObservableProperties):
         seed so the config is the only variable (used for style/checkpoint sweeps).
         `apply_each` is a list of callables, each mutating the setup before a generate;
         `restore` puts the mutated state back afterwards."""
-        original_fixed, original_seed = self.fixed_seed, self.seed
+        original_fixed, original_increment, original_seed = (
+            self.fixed_seed, self.seed_increment, self.seed,
+        )
         self.fixed_seed = True
         self.seed = seed
         try:
@@ -236,6 +240,7 @@ class DocumentModel(QObject, ObservableProperties):
         finally:
             restore()
             self.fixed_seed = original_fixed
+            self.seed_increment = original_increment
             self.seed = original_seed
 
     def generate_replace(self):
@@ -275,6 +280,7 @@ class DocumentModel(QObject, ObservableProperties):
             prompt_loras_0=prompt_loras_0,
         )
         eventloop.run(_report_errors(self, jobs))
+        self._advance_seed_increment(self.batch_count)
 
     def _prepare_workflow(self, dryrun=False):
         arch = self.arch
@@ -312,7 +318,7 @@ class DocumentModel(QObject, ObservableProperties):
         else:
             conditioning, job_regions = ConditioningInput("", ""), []
 
-        seed = self.seed if self.fixed_seed else workflow.generate_seed()
+        seed = self.seed if (self.fixed_seed or self.seed_increment) else workflow.generate_seed()
         ref_layers: dict[str, int] | None = None
         if not dryrun:
             conditioning, ref_layers = self._add_reference_layers(conditioning)
@@ -1015,6 +1021,28 @@ class DocumentModel(QObject, ObservableProperties):
 
     def generate_seed(self):
         self.seed = workflow.generate_seed()
+
+    def set_fixed_seed(self, value: bool):
+        if self._fixed_seed == value:
+            return
+        self._fixed_seed = value
+        self.fixed_seed_changed.emit(value)
+        if value and self._seed_increment:
+            self.seed_increment = False
+        self.modified.emit(self, "fixed_seed")
+
+    def set_seed_increment(self, value: bool):
+        if self._seed_increment == value:
+            return
+        self._seed_increment = value
+        self.seed_increment_changed.emit(value)
+        if value and self._fixed_seed:
+            self.fixed_seed = False
+        self.modified.emit(self, "seed_increment")
+
+    def _advance_seed_increment(self, count: int):
+        if self.seed_increment and not self.fixed_seed:
+            self.seed = (self.seed + count * settings.batch_size) % (2**32)
 
     def save_result(self, job_id: str, index: int):
         _save_job_result(self, self.jobs.find(job_id), index)

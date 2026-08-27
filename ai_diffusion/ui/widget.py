@@ -161,10 +161,18 @@ class QueuePopup(QMenu):
                 "The seed controls the random part of the output. A fixed seed value will always produce the same result for the same inputs."
             )
         )
+        self._seed_increment_check = QCheckBox(self)
+        self._seed_increment_check.setText(_("Increment"))
+        self._seed_increment_check.setToolTip(
+            _(
+                "Increment the seed by one after each generation, producing a sequence of consecutive seeds instead of a random or fixed one."
+            )
+        )
         self._randomize_seed = QToolButton(self)
         self._randomize_seed.setIcon(theme.icon("random"))
         seed_layout = QHBoxLayout()
         seed_layout.addWidget(self._seed_check)
+        seed_layout.addWidget(self._seed_increment_check)
         seed_layout.addWidget(self._seed_input)
         seed_layout.addWidget(self._randomize_seed)
         self._layout.addLayout(seed_layout, 2, 1)
@@ -207,6 +215,11 @@ class QueuePopup(QMenu):
 
         self._model = root.active_model
 
+    def _update_seed_input_enabled(self, *_args):
+        enabled = self._model.fixed_seed or self._model.seed_increment
+        self._seed_input.setEnabled(enabled)
+        self._randomize_seed.setEnabled(enabled)
+
     @property
     def model(self):
         return self._model
@@ -215,9 +228,8 @@ class QueuePopup(QMenu):
     def model(self, model: DocumentModel):
         Binding.disconnect_all(self._connections)
         self._model = model
-        self._randomize_seed.setEnabled(model.fixed_seed)
+        self._update_seed_input_enabled()
         self._seed_input.setValue(model.seed)
-        self._seed_input.setEnabled(model.fixed_seed)
         self._batch_spinbox.setValue(model.batch_count)
         self._connections = [
             bind(model, "batch_count", self._batch_slider, "value"),
@@ -228,8 +240,12 @@ class QueuePopup(QMenu):
             self._seed_input.valueChanged.connect(lambda v: setattr(self._model, "seed", int(v))),
             bind(model, "fixed_seed", self._seed_check, "checked", Bind.one_way),
             self._seed_check.toggled.connect(lambda v: setattr(self._model, "fixed_seed", v)),
-            model.fixed_seed_changed.connect(self._seed_input.setEnabled),
-            model.fixed_seed_changed.connect(self._randomize_seed.setEnabled),
+            bind(model, "seed_increment", self._seed_increment_check, "checked", Bind.one_way),
+            self._seed_increment_check.toggled.connect(
+                lambda v: setattr(self._model, "seed_increment", v)
+            ),
+            model.fixed_seed_changed.connect(self._update_seed_input_enabled),
+            model.seed_increment_changed.connect(self._update_seed_input_enabled),
             self._randomize_seed.clicked.connect(model.generate_seed),
             model.resolution_multiplier_changed.connect(self._update_resolution_multiplier),
             bind_combo(model, "queue_mode", self._queue_mode_combo),
