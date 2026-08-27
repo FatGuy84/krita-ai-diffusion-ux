@@ -317,6 +317,8 @@ after installing new models to force a re-scan.
   copied to clipboard *and* overwrote your current prompt field in one click,
   which is surprising if you only wanted one of those. Now there are four
   separate entries: Apply/Copy × raw/evaluated prompt.
+* **Copy Image to Clipboard**: puts the generated image itself on the clipboard,
+  at full resolution, for pasting into another application.
 * **Apply Style / Strength / Seed**: these entries take the settings an image was
   generated with and make them current. Upstream calls them "Copy Style" and so
   on, which reads like they go to the clipboard — they never did. Apply Style is

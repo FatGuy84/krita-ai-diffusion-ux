@@ -684,6 +684,7 @@ class HistoryWidget(QListWidget):
             menu.addSeparator()
             menu.addAction(_("Copy Prompt to Clipboard"), self._copy_prompt_to_clipboard)
             menu.addAction(_("Copy Prompt (Evaluated) to Clipboard"), self._copy_prompt_evaluated_to_clipboard)
+            menu.addAction(_("Copy Image to Clipboard"), self._copy_image_to_clipboard)
             menu.addAction(_("Info to Clipboard"), self._info_to_clipboard)
             menu.addSeparator()
             __, index = self.item_info(item)
@@ -760,6 +761,21 @@ class HistoryWidget(QListWidget):
         if job := self.selected_job:
             self._model.fixed_seed = True
             self._model.seed = job.params.seed
+
+    def _copy_image_to_clipboard(self):
+        """The generated image itself, at full resolution - for pasting into another
+        application. The clipboard holds one image, so a multi-selection copies the
+        first of them."""
+        items = self.selectedItems()
+        if not items:
+            return
+        job_id, image_index = self.item_info(items[0])
+        job = self._model.jobs.find(job_id)
+        index = image_index or 0
+        if job is None or len(job.results) <= index:
+            return
+        if clipboard := QGuiApplication.clipboard():
+            clipboard.setPixmap(job.results[index].to_pixmap())
 
     def _info_to_clipboard(self):
         if (job := self.selected_job) and (clipboard := QGuiApplication.clipboard()):
