@@ -256,6 +256,29 @@ class Settings(QObject):
         _("NSFW Filter"), 0.0, _("Attempt to filter out images with explicit content")
     )
 
+    civitai_api_key: str
+    _civitai_api_key = Setting(
+        _("CivitAI API Key"),
+        "",
+        _(
+            "Personal API key from civitai.com (Account settings -> API Keys). Optional:"
+            " without it the CivitAI browser still searches, but preview images of"
+            " models rated R and above stay hidden."
+        ),
+    )
+
+    civitai_nsfw_filter: str
+    _civitai_nsfw_filter = Setting(
+        _("CivitAI Content Filter"),
+        "safe",
+        _("Content rating limit applied when browsing CivitAI"),
+        items=[
+            (_("Safe only"), "safe"),
+            (_("Hide explicit"), "hide_explicit"),
+            (_("All ratings"), "all"),
+        ],
+    )
+
     new_seed_after_apply: bool
     _new_seed_after_apply = Setting(
         _("Live: New Seed after Apply"),

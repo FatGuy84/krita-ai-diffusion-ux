@@ -750,6 +750,8 @@ class InterfaceSettings(SettingsTab):
             "apply_region_behavior_live",
             ComboBoxSetting(S._apply_region_behavior_live, parent=self),
         )
+        self.add("civitai_api_key", TextSetting(S._civitai_api_key, parent=self))
+        self.add("civitai_nsfw_filter", ComboBoxSetting(S._civitai_nsfw_filter, parent=self))
         self.add("new_seed_after_apply", SwitchSetting(S._new_seed_after_apply, parent=self))
         self.add("save_image_format", ComboBoxSetting(S._save_image_format, parent=self))
         self.add("save_image_metadata", SwitchSetting(S._save_image_metadata, parent=self))

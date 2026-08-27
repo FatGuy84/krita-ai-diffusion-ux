@@ -43,14 +43,13 @@ from ..backend.lora_manager import (
 )
 from ..localization import translate as _
 from ..model.root import root
+from ..settings import settings
 from . import theme
 from .lora_picker import (
     _ARCH_LABELS,
     _NSFW_ALL,
     _NSFW_HIDE_EXPLICIT,
     _NSFW_SAFE,
-    _extract_video_frame,
-    _ffmpeg_path,
     _visible_range,
     _with_badges,
 )
@@ -98,6 +97,17 @@ def _with_state_marker(pixmap: QPixmap, state: str) -> QPixmap:
     return result
 
 
+def _nsfw_request_flag(mode: str) -> bool | None:
+    """What to ask CivitAI for. Explicitly requesting nsfw=true widens the result set
+    beyond the default; None leaves the choice to CivitAI, and the rating filter is
+    then applied client-side on top."""
+    if mode == _NSFW_SAFE:
+        return False
+    if mode == _NSFW_ALL:
+        return True
+    return None
+
+
 def _size_label(mb: float) -> str:
     if mb <= 0:
         return ""
@@ -119,6 +129,7 @@ class CivitaiPickerDialog(QDialog):
         self._preview_size = _PREVIEW_SIZE_DEFAULT
         self._preview_cache: dict[int, QPixmap] = {}
         self._pending_previews: set[int] = set()
+        self._pending_details: set[int] = set()
         self._installed_hashes: set[str] = set()
         self._installed_models: set[int] = set()
         self._download_id = ""
@@ -170,14 +181,18 @@ class CivitaiPickerDialog(QDialog):
         self._arch_combo.currentIndexChanged.connect(self._start_search)
 
         self._nsfw_combo = QComboBox(self)
-        self._nsfw_combo.addItem(_("All ratings"), _NSFW_ALL)
         self._nsfw_combo.addItem(_("Safe only"), _NSFW_SAFE)
         self._nsfw_combo.addItem(_("Hide explicit"), _NSFW_HIDE_EXPLICIT)
+        self._nsfw_combo.addItem(_("All ratings"), _NSFW_ALL)
+        nsfw_index = self._nsfw_combo.findData(settings.civitai_nsfw_filter)
+        self._nsfw_combo.setCurrentIndex(nsfw_index if nsfw_index >= 0 else 0)
         self._nsfw_combo.setToolTip(
-            _("Filter by the CivitAI content rating.\nWithout an API key CivitAI hides")
-            + " "
-            + _("preview images of mature models, so those tiles stay empty.")
+            _(
+                "Content rating limit for CivitAI results. The starting value comes from"
+                " Settings - Interface, and changing it here updates that setting."
+            )
         )
+        self._nsfw_combo.currentIndexChanged.connect(self._save_nsfw_setting)
         self._nsfw_combo.currentIndexChanged.connect(self._start_search)
 
         self._commercial_check = QCheckBox(_("Sellable images only"), self)
@@ -277,6 +292,13 @@ class CivitaiPickerDialog(QDialog):
         self._refresh_installed()
         self._start_search()
 
+    def _api_key(self) -> str:
+        return settings.civitai_api_key.strip()
+
+    def _save_nsfw_setting(self):
+        settings.civitai_nsfw_filter = self._nsfw_combo.currentData()
+        settings.save()
+
     # ── local library state ──
 
     def _refresh_installed(self):
@@ -326,6 +348,7 @@ class CivitaiPickerDialog(QDialog):
         self._grid.clear()
         self._preview_cache.clear()
         self._pending_previews.clear()
+        self._pending_details.clear()
         self._fetch_page()
 
     def _fetch_page(self):
@@ -345,9 +368,10 @@ class CivitaiPickerDialog(QDialog):
                 base_models=self._current_base_models(),
                 sort=self._sort_combo.currentData(),
                 period=self._period_combo.currentData(),
-                nsfw=False if nsfw_mode == _NSFW_SAFE else None,
+                nsfw=_nsfw_request_flag(nsfw_mode),
                 limit=_PAGE_SIZE,
                 cursor=self._cursor,
+                api_key=self._api_key(),
             )
         except Exception as e:
             if generation == self._search_generation:
@@ -490,30 +514,48 @@ class CivitaiPickerDialog(QDialog):
             if not model.versions:
                 continue
             version = model.versions[0]
-            if not version.preview_url or version.id in self._preview_cache:
+            if version.id in self._preview_cache or version.id in self._pending_previews:
                 continue
-            if version.id in self._pending_previews:
+            if not version.preview_url:
+                # the search endpoint omits images for models rated R and above; the
+                # detail endpoint still has them, so fetch one for this tile only
+                if model.id not in self._pending_details:
+                    self._pending_details.add(model.id)
+                    eventloop.run(self._load_missing_preview(model, version, item))
                 continue
-            if civitai.is_video_url(version.preview_url) and _ffmpeg_path is None:
-                continue  # no decoder available - placeholder stays
             self._pending_previews.add(version.id)
             eventloop.run(self._load_preview(model, version, item))
 
+    async def _load_missing_preview(
+        self, model: CivitaiModel, version: CivitaiVersion, item: QListWidgetItem
+    ):
+        url, nsfw_level = await civitai.fetch_model_preview(model.id, self._api_key())
+        if not url:
+            return
+        version.preview_url = url
+        version.preview_nsfw_level = nsfw_level
+        if version.id in self._pending_previews:
+            return
+        self._pending_previews.add(version.id)
+        await self._load_preview(model, version, item)
+
     async def _load_preview(self, model: CivitaiModel, version: CivitaiVersion, item):
+        # CivitAI's CDN renders a still frame for animated previews (anim=false), so
+        # even mp4 previews arrive as a small JPEG - no local video decoding needed
         is_video = civitai.is_video_url(version.preview_url)
-        url = version.preview_url
-        if not is_video:
-            url = civitai.preview_thumbnail_url(url, max(_PREVIEW_SIZE_MAX, 320))
+        url = civitai.preview_thumbnail_url(version.preview_url, _PREVIEW_SIZE_MAX)
         data = await civitai.fetch_image(url)
-        if data and is_video:
-            loop = asyncio.get_running_loop()
-            data = await loop.run_in_executor(None, _extract_video_frame, data)
         if not data:
             return
         pixmap = QPixmap()
         pixmap.loadFromData(data)
         if pixmap.isNull():
             return
+        if is_video:  # mark it as coming from an animated preview
+            badge = theme.icon("play").pixmap(24, 24)
+            painter = QPainter(pixmap)
+            painter.drawPixmap(pixmap.width() - 28, pixmap.height() - 28, badge)
+            painter.end()
         self._preview_cache[version.id] = pixmap
         try:
             self._set_tile_icon(item, model, version)

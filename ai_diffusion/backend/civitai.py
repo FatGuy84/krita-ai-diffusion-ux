@@ -166,19 +166,24 @@ def is_video_url(url: str) -> bool:
 
 
 def preview_thumbnail_url(url: str, width: int = 320) -> str:
-    """CivitAI images come from a CDN whose second-to-last path segment carries the
-    transform (`original=true,quality=90` or `width=450`). Replacing it with a width
-    fetches a thumbnail - without this every tile pulls a multi-megabyte original."""
-    if not url or is_video_url(url):
+    """Rewrite a CivitAI image URL to fetch a thumbnail instead of the original.
+
+    The second-to-last path segment carries the CDN transform. `anim=false` is what
+    does the heavy lifting: it makes the CDN return a single JPEG frame, which turns
+    a 2.9 MB mp4 preview into a 105 KB still - no local video decoding needed - and
+    a width alone is sometimes ignored (1.4 MB original vs 50 KB with anim+quality).
+    """
+    if not url:
         return url
+    transform = f"anim=false,width={width},quality=75"
     parts = url.split("/")
     if len(parts) < 2:
         return url
     for i, part in enumerate(parts):
-        if part.startswith(("original=", "width=")):
-            parts[i] = f"width={width}"
+        if part.startswith(("original=", "width=", "anim=")):
+            parts[i] = transform
             return "/".join(parts)
-    parts.insert(len(parts) - 1, f"width={width}")  # no transform segment present
+    parts.insert(len(parts) - 1, transform)  # no transform segment present
     return "/".join(parts)
 
 
@@ -239,6 +244,31 @@ async def search_models(
     models = [CivitaiModel.from_api(item) for item in data.get("items") or []]
     next_cursor = str((data.get("metadata") or {}).get("nextCursor") or "")
     return models, next_cursor
+
+
+async def fetch_model_preview(model_id: int, api_key: str = "") -> tuple[str, int]:
+    """Preview image url and its rating for a single model, via the detail endpoint.
+
+    The list endpoint returns no images at all for models rated R and above (~a third
+    of results), while /models/{id} does hand them out - so a tile without a preview
+    can still get one, at the cost of one request per model.
+    """
+    try:
+        data = await requests().get(
+            f"{api_url}/models/{int(model_id)}", timeout=20.0, bearer=api_key or None
+        )
+        if isinstance(data, (bytes, bytearray)):
+            data = json.loads(data)
+        if not isinstance(data, dict):
+            return "", 0
+        for version in data.get("modelVersions") or []:
+            for image in version.get("images") or []:
+                if url := image.get("url"):
+                    return url, int(image.get("nsfwLevel") or 0)
+        return "", 0
+    except Exception as e:
+        log.warning(f"Could not fetch CivitAI model {model_id}: {e}")
+        return "", 0
 
 
 async def fetch_image(url: str) -> bytes | None:

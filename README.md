@@ -195,9 +195,18 @@ the file, so a downloaded model shows up fully described in the LoRA browser.
 * **Downloads** show progress, speed and a cancel button. Duplicate downloads are
   refused by Lora Manager, early-access models are marked and cannot be
   downloaded (they need a purchase on CivitAI first).
-* Content-rating filter, video previews and the preview size slider work the same
-  as in the LoRA browser. Note that CivitAI hides preview images of mature models
-  from anonymous API access, so those tiles stay empty.
+* **Content rating**: the filter starts at whatever *Settings → Interface →
+  CivitAI Content Filter* is set to, and changing it in the browser updates that
+  setting, so it stays where you left it.
+* **API key** (optional, *Settings → Interface → CivitAI API Key*, created under
+  Account settings → API Keys on civitai.com): raises the rate limits and gives
+  access to content that is hidden from anonymous requests. Note it is stored in
+  plain text in the plugin's `settings.json`, like the other connection settings.
+* **Previews** are pulled as CDN thumbnails (`anim=false`), which also means
+  animated and video previews arrive as a still frame — no ffmpeg needed, and a
+  tile costs ~50 KB instead of the multi-megabyte original. Where CivitAI's search
+  endpoint returns no image at all (it does that for models rated R and above), the
+  browser fetches one from the model's detail endpoint for visible tiles only.
 
 ### Style Picker
 
