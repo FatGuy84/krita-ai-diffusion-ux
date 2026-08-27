@@ -183,6 +183,15 @@ the file, so a downloaded model shows up fully described in the LoRA browser.
   a base-model filter that is pre-set to the architecture of your current
   checkpoint. Pony, Illustrious and NoobAI are separate labels on CivitAI even
   though they are SDXL underneath, so picking "SD XL" includes them.
+* **Tag filter**: a dropdown filled with CivitAI's own tag vocabulary (character,
+  style, clothing, concept, …), most used first, and you can type your own. A tag
+  the site does not know is silently ignored by its search — the browser checks the
+  entered tag against the vocabulary and says so instead of showing you unfiltered
+  results that look like a match.
+* **Download location**: a *Save to* row picks the model root (as configured in
+  Lora Manager) and a subfolder — either an existing one from your library or a
+  new path you type, which Lora Manager creates. Both are remembered, and leaving
+  them empty keeps Lora Manager's own default layout.
 * **Already in your library** is marked on the tile: a green check means this
   exact version is installed (matched by file hash), a blue arrow means you have
   a different version of the same model.

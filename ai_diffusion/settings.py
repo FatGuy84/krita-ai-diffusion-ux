@@ -279,6 +279,23 @@ class Settings(QObject):
         ],
     )
 
+    civitai_download_root: str
+    _civitai_download_root = Setting(
+        _("CivitAI Download Folder"),
+        "",
+        _(
+            "Model root that CivitAI downloads are written to. Empty means whatever"
+            " Lora Manager has configured as its default."
+        ),
+    )
+
+    civitai_download_subfolder: str
+    _civitai_download_subfolder = Setting(
+        _("CivitAI Download Subfolder"),
+        "",
+        _("Subfolder below the download folder, e.g. Illustrious/character"),
+    )
+
     new_seed_after_apply: bool
     _new_seed_after_apply = Setting(
         _("Live: New Seed after Apply"),

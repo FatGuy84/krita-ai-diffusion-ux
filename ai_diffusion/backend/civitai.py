@@ -213,6 +213,7 @@ async def search_models(
     query: str = "",
     types: list[str] | None = None,
     base_models: list[str] | None = None,
+    tag: str = "",
     sort: str = "Highest Rated",
     period: str = "AllTime",
     nsfw: bool | None = None,
@@ -226,6 +227,8 @@ async def search_models(
     params: list[tuple[str, str]] = [("limit", str(limit)), ("sort", sort), ("period", period)]
     if query:
         params.append(("query", query))
+    if tag:
+        params.append(("tag", tag))
     for t in types or lora_types:
         params.append(("types", t))
     for b in base_models or []:
@@ -269,6 +272,29 @@ async def fetch_model_preview(model_id: int, api_key: str = "") -> tuple[str, in
     except Exception as e:
         log.warning(f"Could not fetch CivitAI model {model_id}: {e}")
         return "", 0
+
+
+async def fetch_tags(query: str = "", limit: int = 100, api_key: str = "") -> list[str]:
+    """Tag vocabulary, most used first (or prefix matches for `query`).
+
+    Worth having because CivitAI silently ignores a `tag` it does not know - the
+    search then returns unfiltered results that look like a match. Offering the real
+    vocabulary keeps the filter honest."""
+    params = [("limit", str(limit))]
+    if query:
+        params.append(("query", query))
+    try:
+        data = await requests().get(
+            f"{api_url}/tags?{_query(params)}", timeout=20.0, bearer=api_key or None
+        )
+        if isinstance(data, (bytes, bytearray)):
+            data = json.loads(data)
+        if not isinstance(data, dict):
+            return []
+        return [str(t.get("name", "")) for t in data.get("items") or [] if t.get("name")]
+    except Exception as e:
+        log.warning(f"Could not fetch CivitAI tags: {e}")
+        return []
 
 
 async def fetch_image(url: str) -> bytes | None:

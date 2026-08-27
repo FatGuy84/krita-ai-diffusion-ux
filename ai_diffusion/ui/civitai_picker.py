@@ -37,6 +37,8 @@ from ..backend.lora_manager import (
     cancel_download,
     clear_lora_cache,
     fetch_download_progress,
+    fetch_folders,
+    fetch_model_roots,
     load_cached_loras,
     new_download_id,
     start_download,
@@ -135,6 +137,7 @@ class CivitaiPickerDialog(QDialog):
         self._download_id = ""
         self._download_running = False
         self._search_generation = 0
+        self._known_tags: list[str] = []
 
         self.setWindowTitle(_("CivitAI Browser"))
         self.setMinimumSize(720, 520)
@@ -153,6 +156,7 @@ class CivitaiPickerDialog(QDialog):
         self._kind_combo.addItem(_("LoRA"), _KIND_LORA)
         self._kind_combo.addItem(_("Checkpoint"), _KIND_CHECKPOINT)
         self._kind_combo.currentIndexChanged.connect(self._start_search)
+        self._kind_combo.currentIndexChanged.connect(self._load_locations)
 
         self._sort_combo = QComboBox(self)
         for option in civitai.sort_options:
@@ -179,6 +183,20 @@ class CivitaiPickerDialog(QDialog):
         index = self._arch_combo.findData(current_arch)
         self._arch_combo.setCurrentIndex(index if index >= 0 else 0)
         self._arch_combo.currentIndexChanged.connect(self._start_search)
+
+        self._tag_combo = QComboBox(self)
+        self._tag_combo.setEditable(True)
+        self._tag_combo.setMinimumWidth(150)
+        self._tag_combo.addItem(_("Any tag"), "")
+        self._tag_combo.setToolTip(
+            _(
+                "Filter by a CivitAI tag (character, style, clothing, ...). The list is"
+                " the site's own tag vocabulary, most used first. A tag CivitAI does"
+                " not know is ignored by the search, so unknown ones are flagged here."
+            )
+        )
+        self._tag_combo.currentIndexChanged.connect(self._start_search)
+        self._tag_combo.lineEdit().returnPressed.connect(self._start_search)
 
         self._nsfw_combo = QComboBox(self)
         self._nsfw_combo.addItem(_("Safe only"), _NSFW_SAFE)
@@ -215,6 +233,7 @@ class CivitaiPickerDialog(QDialog):
 
         row2 = QHBoxLayout()
         row2.addWidget(self._arch_combo)
+        row2.addWidget(self._tag_combo)
         row2.addWidget(self._nsfw_combo)
         row2.addWidget(self._commercial_check)
         row2.addStretch(1)
@@ -258,6 +277,32 @@ class CivitaiPickerDialog(QDialog):
         self._download_row.setLayout(download_layout)
         self._download_row.setVisible(False)
 
+        # ── download location ──
+        self._root_combo = QComboBox(self)
+        self._root_combo.addItem(_("Lora Manager default"), "")
+        self._root_combo.setToolTip(
+            _("Model root new downloads are written to, as configured in Lora Manager")
+        )
+        self._root_combo.currentIndexChanged.connect(self._save_location_setting)
+
+        self._folder_combo = QComboBox(self)
+        self._folder_combo.setEditable(True)
+        self._folder_combo.setMinimumWidth(200)
+        self._folder_combo.addItem(_("(root folder)"), "")
+        self._folder_combo.setToolTip(
+            _(
+                "Subfolder below that root. Pick an existing one or type a new path -"
+                " Lora Manager creates it on download."
+            )
+        )
+        self._folder_combo.currentIndexChanged.connect(self._save_location_setting)
+        self._folder_combo.lineEdit().editingFinished.connect(self._save_location_setting)
+
+        location_row = QHBoxLayout()
+        location_row.addWidget(QLabel(_("Save to:"), self))
+        location_row.addWidget(self._root_combo, 1)
+        location_row.addWidget(self._folder_combo, 1)
+
         # ── bottom bar ──
         self._selected_label = QLabel(_("No model selected"), self)
         self._selected_label.setWordWrap(True)
@@ -286,10 +331,13 @@ class CivitaiPickerDialog(QDialog):
         layout.addWidget(self._grid, 1)
         layout.addWidget(self._status)
         layout.addWidget(self._download_row)
+        layout.addLayout(location_row)
         layout.addLayout(bottom)
         self.setLayout(layout)
 
         self._refresh_installed()
+        self._load_tags()
+        self._load_locations()
         self._start_search()
 
     def _api_key(self) -> str:
@@ -298,6 +346,56 @@ class CivitaiPickerDialog(QDialog):
     def _save_nsfw_setting(self):
         settings.civitai_nsfw_filter = self._nsfw_combo.currentData()
         settings.save()
+
+    def _current_tag(self) -> str:
+        return self._tag_combo.currentText().strip().lower()
+
+    def _load_tags(self):
+        eventloop.run(self._fetch_tags())
+
+    async def _fetch_tags(self):
+        tags = await civitai.fetch_tags(api_key=self._api_key())
+        if not tags:
+            return
+        self._known_tags = tags
+        current = self._tag_combo.currentText()
+        with theme.SignalBlocker(self._tag_combo):
+            self._tag_combo.clear()
+            self._tag_combo.addItem(_("Any tag"), "")
+            for tag in tags:
+                self._tag_combo.addItem(tag, tag)
+            self._tag_combo.setCurrentText(current)
+
+    # ── download location ──
+
+    def _save_location_setting(self):
+        settings.civitai_download_root = self._root_combo.currentData() or ""
+        settings.civitai_download_subfolder = self._folder_combo.currentText().strip()
+        settings.save()
+
+    def _load_locations(self):
+        eventloop.run(self._fetch_locations())
+
+    async def _fetch_locations(self):
+        client = root.connection.client_if_connected
+        if client is None:
+            return
+        kind = "checkpoints" if self._kind_combo.currentData() == _KIND_CHECKPOINT else "loras"
+        roots = await fetch_model_roots(client._requests, client.url, kind)
+        folders = await fetch_folders(client._requests, client.url, kind)
+        with theme.SignalBlocker(self._root_combo):
+            self._root_combo.clear()
+            self._root_combo.addItem(_("Lora Manager default"), "")
+            for entry in roots:
+                self._root_combo.addItem(entry, entry)
+            index = self._root_combo.findData(settings.civitai_download_root)
+            self._root_combo.setCurrentIndex(index if index >= 0 else 0)
+        with theme.SignalBlocker(self._folder_combo):
+            self._folder_combo.clear()
+            self._folder_combo.addItem(_("(root folder)"), "")
+            for entry in sorted(f for f in folders if f):
+                self._folder_combo.addItem(entry, entry)
+            self._folder_combo.setCurrentText(settings.civitai_download_subfolder)
 
     # ── local library state ──
 
@@ -365,6 +463,7 @@ class CivitaiPickerDialog(QDialog):
             models, cursor = await civitai.search_models(
                 query=self._search.text().strip(),
                 types=self._current_types(),
+                tag=self._current_tag(),
                 base_models=self._current_base_models(),
                 sort=self._sort_combo.currentData(),
                 period=self._period_combo.currentData(),
@@ -384,6 +483,13 @@ class CivitaiPickerDialog(QDialog):
         self._cursor = cursor
         self._models.extend(models)
         self._apply_filter()
+        tag = self._current_tag()
+        if tag and self._known_tags and tag not in self._known_tags:
+            # CivitAI ignores an unknown tag instead of returning nothing, so results
+            # would silently be unfiltered - say so rather than let it look like a hit
+            self._status.setText(
+                self._status.text() + f" – {_('unknown tag')} '{tag}', {_('filter ignored')}"
+            )
 
     def _on_scrolled(self, value: int):
         self._schedule_visible_previews()
@@ -665,7 +771,13 @@ class CivitaiPickerDialog(QDialog):
         download_id = self._download_id
         task = asyncio.ensure_future(
             start_download(
-                client._requests, client.url, model.id, version.id, download_id=download_id
+                client._requests,
+                client.url,
+                model.id,
+                version.id,
+                download_id=download_id,
+                model_root=self._root_combo.currentData() or "",
+                relative_path=self._folder_combo.currentText().strip(),
             )
         )
         try:

@@ -538,7 +538,7 @@ async def save_recipe(
         return f"Could not reach Lora Manager: {e}"
 
 
-# ── downloading models through Lora Manager ─────────────────────────────────
+# ── downloading models through Lora Manager ──
 # Lora Manager does the actual fetching from CivitAI (it has the API key, knows the
 # folder layout and writes metadata + preview next to the file), so the plugin only
 # schedules a download and watches its progress.
@@ -626,3 +626,32 @@ def clear_lora_cache(base_url: str):
         _cache_path(base_url).unlink(missing_ok=True)
     except Exception as e:
         log.warning(f"Could not clear LoRA cache: {e}")
+
+
+async def fetch_model_roots(requests: RequestManager, base_url: str, kind: str = "loras"):
+    """Model root folders configured in Lora Manager, e.g. the loras directory.
+    First entry is the default. Empty if Lora Manager is not installed."""
+    base = base_url.rstrip("/")
+    try:
+        data = await requests.get(f"{base}/api/lm/{kind}/roots", timeout=10.0)
+        if isinstance(data, (bytes, bytearray)):
+            data = json.loads(data)
+        if isinstance(data, dict) and data.get("success"):
+            return [str(r) for r in data.get("roots") or []]
+    except Exception as e:
+        log.warning(f"Could not fetch {kind} roots: {e}")
+    return []
+
+
+async def fetch_folders(requests: RequestManager, base_url: str, kind: str = "loras"):
+    """Existing subfolders below the model roots, as relative paths ("" = root)."""
+    base = base_url.rstrip("/")
+    try:
+        data = await requests.get(f"{base}/api/lm/{kind}/folders", timeout=15.0)
+        if isinstance(data, (bytes, bytearray)):
+            data = json.loads(data)
+        if isinstance(data, dict):
+            return [str(f) for f in data.get("folders") or []]
+    except Exception as e:
+        log.warning(f"Could not fetch {kind} folders: {e}")
+    return []
