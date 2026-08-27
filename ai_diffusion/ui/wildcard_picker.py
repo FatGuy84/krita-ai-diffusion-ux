@@ -7,12 +7,16 @@ from PyQt5.QtWidgets import (
     QComboBox,
     QDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QSplitter,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -20,6 +24,7 @@ from PyQt5.QtWidgets import (
 
 from ..localization import translate as _
 from ..model.root import root
+from ..settings import settings
 from ..wildcards import WildcardLibrary
 from . import theme
 
@@ -29,6 +34,9 @@ _POS_CURSOR = "cursor"
 _MODE_NORMAL = "normal"
 _MODE_RANDOM = "random"
 _MODE_SEQUENTIAL = "sequential"
+_MODE_SEQUENTIAL_FILE = "sequential_file"
+_SORT_NAME = "name"
+_SORT_DATE = "date"
 
 
 class WildcardPickerDialog(QDialog):
@@ -40,10 +48,13 @@ class WildcardPickerDialog(QDialog):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._library = WildcardLibrary.instance()
+        self._current_name: str | None = None
+        self._dirty = False
+        self._loading_preview = False
 
         self.setWindowTitle(_("Wildcards"))
-        self.setMinimumSize(420, 480)
-        self.resize(480, 560)
+        self.setMinimumSize(480, 360)
+        self.resize(560, 420)
         self.setModal(False)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.Window)
 
@@ -51,6 +62,11 @@ class WildcardPickerDialog(QDialog):
         self._search.setPlaceholderText(_("Search wildcards…"))
         self._search.setClearButtonEnabled(True)
         self._search.textChanged.connect(self._apply_filter)
+
+        self._new_btn = QToolButton(self)
+        self._new_btn.setText(_("New…"))
+        self._new_btn.setToolTip(_("Create a new wildcard file"))
+        self._new_btn.clicked.connect(self._create_wildcard)
 
         self._reload_btn = QToolButton(self)
         self._reload_btn.setIcon(theme.icon("reset"))
@@ -62,8 +78,20 @@ class WildcardPickerDialog(QDialog):
         self._folder_btn.setToolTip(_("Open the wildcards folder"))
         self._folder_btn.clicked.connect(self._open_folder)
 
+        sort_label = QLabel(_("Sort:"), self)
+        self._sort_combo = QComboBox(self)
+        self._sort_combo.addItem(_("Name"), _SORT_NAME)
+        self._sort_combo.addItem(_("Date Added"), _SORT_DATE)
+        idx = self._sort_combo.findData(settings.wildcard_browser_sort)
+        self._sort_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._sort_combo.currentIndexChanged.connect(self._apply_filter)
+        self._sort_combo.currentIndexChanged.connect(self._save_sort_setting)
+
         row1 = QHBoxLayout()
         row1.addWidget(self._search, 1)
+        row1.addWidget(sort_label)
+        row1.addWidget(self._sort_combo)
+        row1.addWidget(self._new_btn)
         row1.addWidget(self._reload_btn)
         row1.addWidget(self._folder_btn)
 
@@ -71,6 +99,46 @@ class WildcardPickerDialog(QDialog):
         self._list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self._list.itemSelectionChanged.connect(self._on_selection_changed)
         self._list.itemDoubleClicked.connect(lambda _item: self._add_to_prompt())
+
+        self._preview_label = QLabel(_("Select a wildcard to preview its content."), self)
+        self._preview_label.setStyleSheet(f"color: {theme.grey}; font-style: italic;")
+
+        self._rename_btn = QToolButton(self)
+        self._rename_btn.setText(_("Rename…"))
+        self._rename_btn.setToolTip(_("Rename or move this wildcard file"))
+        self._rename_btn.setEnabled(False)
+        self._rename_btn.clicked.connect(self._rename_selected)
+
+        self._save_btn = QToolButton(self)
+        self._save_btn.setText(_("Save"))
+        self._save_btn.setToolTip(_("Write the edited content back to the file"))
+        self._save_btn.setEnabled(False)
+        self._save_btn.clicked.connect(self._save_preview)
+
+        preview_header = QHBoxLayout()
+        preview_header.addWidget(self._preview_label, 1)
+        preview_header.addWidget(self._rename_btn)
+        preview_header.addWidget(self._save_btn)
+
+        self._preview = QPlainTextEdit(self)
+        self._preview.setPlaceholderText(_("Select a wildcard to preview and edit its content…"))
+        self._preview.setEnabled(False)
+        self._preview.textChanged.connect(self._on_preview_edited)
+        preview_font = self._preview.font()
+        preview_font.setFamily("monospace")
+        self._preview.setFont(preview_font)
+
+        preview_layout = QVBoxLayout()
+        preview_layout.addLayout(preview_header)
+        preview_layout.addWidget(self._preview, 1)
+        preview_widget = QWidget(self)
+        preview_widget.setLayout(preview_layout)
+
+        self._splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._splitter.addWidget(self._list)
+        self._splitter.addWidget(preview_widget)
+        self._splitter.setStretchFactor(0, 1)
+        self._splitter.setStretchFactor(1, 1)
 
         self._hint = QLabel(self)
         self._hint.setWordWrap(True)
@@ -80,13 +148,18 @@ class WildcardPickerDialog(QDialog):
         self._mode_combo = QComboBox(self)
         self._mode_combo.addItem(_("Normal __name__"), _MODE_NORMAL)
         self._mode_combo.addItem(_("Random {a|b}"), _MODE_RANDOM)
-        self._mode_combo.addItem(_("Sequential [[a|b]]"), _MODE_SEQUENTIAL)
+        self._mode_combo.addItem(_("Sequential (snapshot) [[a|b]]"), _MODE_SEQUENTIAL)
+        self._mode_combo.addItem(_("Sequential (live file) __seq:name__"), _MODE_SEQUENTIAL_FILE)
         self._mode_combo.setToolTip(
             _(
-                "Normal: live reference to the file, picks one line at random per image."
-                " Random/Sequential: expands the file's lines directly into the prompt as a"
-                " wildcard group (a frozen snapshot, not a live reference) - Sequential cycles"
-                " through every line across the batch instead of picking randomly."
+                "Normal: live reference to the file, picks one line at random per image.\n"
+                "Random: expands the file's lines directly into the prompt as a wildcard group"
+                " (a frozen snapshot, not a live reference) - picks randomly per image.\n"
+                "Sequential (snapshot): same frozen expansion, but cycles through every line"
+                " across the batch instead of picking randomly.\n"
+                "Sequential (live file): stays a short live reference to the file (like Normal)"
+                " but cycles through its lines across the batch - use the batch-count button"
+                " next to the batch slider to size the batch to the file's line count."
             )
         )
 
@@ -117,7 +190,7 @@ class WildcardPickerDialog(QDialog):
 
         layout = QVBoxLayout()
         layout.addLayout(row1)
-        layout.addWidget(self._list, 1)
+        layout.addWidget(self._splitter, 1)
         layout.addWidget(self._hint)
         layout.addLayout(bottom)
         self.setLayout(layout)
@@ -130,20 +203,41 @@ class WildcardPickerDialog(QDialog):
         self._library.reload()
         self._apply_filter()
 
+    def _sort_key(self, name: str):
+        if self._sort_combo.currentData() == _SORT_DATE:
+            path = self._library.path_for(name)
+            try:
+                return -path.stat().st_ctime if path else 0.0
+            except OSError:
+                return 0.0
+        return name
+
+    def _save_sort_setting(self):
+        settings.wildcard_browser_sort = self._sort_combo.currentData()
+        settings.save()
+
     def _apply_filter(self):
         search = self._search.text().strip().lower()
-        self._list.clear()
-        names = self._library.names()
-        for name in names:
-            if search and search not in name:
-                continue
-            options = self._library.get(name) or []
-            item = QListWidgetItem(f"{name}  ({len(options)})")
-            item.setData(Qt.ItemDataRole.UserRole, name)
-            preview = "\n".join(options[:8])
-            more = f"\n… +{len(options) - 8} more" if len(options) > 8 else ""
-            item.setToolTip(f"__{name}__\n\n{preview}{more}")
-            self._list.addItem(item)
+        names = sorted(self._library.names(), key=self._sort_key)
+        # rebuilding the list is not a user-driven selection change (e.g. it also runs
+        # on every keystroke in the search box) - block signals so it never triggers
+        # the unsaved-changes prompt, then restore the previous selection silently
+        self._list.blockSignals(True)
+        try:
+            self._list.clear()
+            for name in names:
+                if search and search not in name:
+                    continue
+                options = self._library.get(name) or []
+                item = QListWidgetItem(f"{name}  ({len(options)})")
+                item.setData(Qt.ItemDataRole.UserRole, name)
+                preview = "\n".join(options[:8])
+                more = f"\n… +{len(options) - 8} more" if len(options) > 8 else ""
+                item.setToolTip(f"__{name}__\n\n{preview}{more}")
+                self._list.addItem(item)
+            self._select_item_by_name(self._current_name)
+        finally:
+            self._list.blockSignals(False)
 
         if not names:
             self._hint.setText(
@@ -165,13 +259,135 @@ class WildcardPickerDialog(QDialog):
 
     def _on_selection_changed(self):
         name = self._selected_name()
+        if name == self._current_name:
+            return  # no actual change (e.g. reverted below) - keep any unsaved edits as-is
+        if self._dirty and not self._confirm_discard():
+            self._select_item_by_name(self._current_name)  # revert, re-enters this method
+            return
+        self._dirty = False
+        self._current_name = name
         self._add_btn.setEnabled(name is not None)
         self._selected_label.setText(f"__{name}__" if name else _("No wildcard selected"))
+        self._update_preview(name)
+
+    def _update_preview(self, name: str | None):
+        self._loading_preview = True
+        try:
+            self._preview.setEnabled(name is not None)
+            self._rename_btn.setEnabled(name is not None)
+            self._save_btn.setEnabled(False)
+            if name is None:
+                self._preview_label.setText(_("Select a wildcard to preview its content."))
+                self._preview.setPlainText("")
+                return
+            options = self._library.get(name) or []
+            self._preview_label.setText(f"__{name}__  ({len(options)})")
+            self._preview.setPlainText("\n".join(options))
+        finally:
+            self._loading_preview = False
+
+    def _on_preview_edited(self):
+        if self._loading_preview:
+            return
+        self._dirty = True
+        self._save_btn.setEnabled(True)
+        if self._current_name is not None:
+            self._preview_label.setText(f"__{self._current_name}__ *")
+
+    def _confirm_discard(self) -> bool:
+        result = QMessageBox.question(
+            self,
+            _("Unsaved Changes"),
+            _("Discard unsaved changes to") + f" __{self._current_name}__?",
+            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return result == QMessageBox.StandardButton.Discard
+
+    def _select_item_by_name(self, name: str | None):
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == name:
+                self._list.setCurrentItem(item)
+                return
+        self._list.clearSelection()
+
+    def _save_preview(self):
+        name = self._current_name
+        if name is None:
+            return
+        text = self._preview.toPlainText()
+        lines = text.splitlines()
+        if not text.strip():
+            QMessageBox.warning(
+                self, _("Save Failed"), _("A wildcard file needs at least one option line.")
+            )
+            return
+        if self._library.save(name, lines):
+            self._dirty = False
+            self._apply_filter()  # refreshes the item's line count in the list
+            self._update_preview(name)  # reflects the file as re-parsed from disk
+        else:
+            QMessageBox.warning(
+                self, _("Save Failed"), _("Could not write the wildcard file. See the log for details.")
+            )
+
+    def _create_wildcard(self):
+        name, ok = QInputDialog.getText(
+            self, _("New Wildcard"), _("File name (may include a folder/ prefix):")
+        )
+        if not ok or not name.strip():
+            return
+        if self._library.create(name, [_("option 1"), _("option 2")]):
+            self._apply_filter()
+            self._select_item_by_name(name.strip().strip("/\\").lower())
+            self._preview.setFocus()
+        else:
+            QMessageBox.warning(
+                self, _("Create Failed"),
+                _("Could not create the wildcard file - a file with that name may already exist."),
+            )
+
+    def _rename_selected(self):
+        name = self._current_name
+        if name is None:
+            return
+        if self._dirty:
+            QMessageBox.information(
+                self, _("Unsaved Changes"),
+                _("Save or discard the edited content before renaming this file."),
+            )
+            return
+        new_name, ok = QInputDialog.getText(
+            self,
+            _("Rename Wildcard"),
+            _("New name (may include a folder/ prefix to move the file):"),
+            QLineEdit.EchoMode.Normal,
+            name,
+        )
+        if not ok or not new_name.strip() or new_name.strip().lower() == name:
+            return
+        if self._library.rename(name, new_name):
+            self._apply_filter()
+            self._select_item_by_name(new_name.strip().strip("/\\").lower())
+        else:
+            QMessageBox.warning(
+                self, _("Rename Failed"),
+                _("Could not rename the file - the target name may already exist or be invalid."),
+            )
+
+    def closeEvent(self, event):
+        if self._dirty and not self._confirm_discard():
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def _build_tag(self, name: str) -> str:
         mode = self._mode_combo.currentData()
         if mode == _MODE_NORMAL:
             return f"__{name}__"
+        if mode == _MODE_SEQUENTIAL_FILE:
+            return f"__seq:{name}__"
         options = self._library.get(name) or []
         joined = "|\n".join(options)
         if mode == _MODE_SEQUENTIAL:

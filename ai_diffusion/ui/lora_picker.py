@@ -14,11 +14,13 @@ from PyQt5.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -40,6 +42,8 @@ from ..backend.lora_manager import (
 )
 from ..localization import translate as _
 from ..model.root import root
+from ..settings import settings
+from ..wildcards import WildcardLibrary
 from . import theme
 
 _PREVIEW_SIZE_DEFAULT = 96
@@ -224,7 +228,7 @@ class LoraPickerDialog(QDialog):
         self._pending_previews: set[str] = set()
         self._pending_commercial: set[str] = set()
         self._loading = False
-        self._preview_size = _PREVIEW_SIZE_DEFAULT
+        self._preview_size = settings.lora_browser_size
 
         self.setWindowTitle(_("LoRA Browser"))
         self.setMinimumSize(640, 480)
@@ -291,15 +295,19 @@ class LoraPickerDialog(QDialog):
         self._sort_combo = QComboBox(self)
         self._sort_combo.addItem(_("Name"), _SORT_NAME)
         self._sort_combo.addItem(_("Date Added"), _SORT_DATE)
+        idx = self._sort_combo.findData(settings.lora_browser_sort)
+        self._sort_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._sort_combo.currentIndexChanged.connect(self._apply_filter)
+        self._sort_combo.currentIndexChanged.connect(self._save_sort_setting)
 
         size_label = QLabel(_("Size:"), self)
         self._size_slider = QSlider(Qt.Orientation.Horizontal, self)
         self._size_slider.setMinimum(_PREVIEW_SIZE_MIN)
         self._size_slider.setMaximum(_PREVIEW_SIZE_MAX)
-        self._size_slider.setValue(_PREVIEW_SIZE_DEFAULT)
+        self._size_slider.setValue(self._preview_size)
         self._size_slider.setFixedWidth(90)
         self._size_slider.valueChanged.connect(self._on_preview_size_changed)
+        self._size_slider.sliderReleased.connect(self._save_size_setting)
 
         row2 = QHBoxLayout()
         row2.addWidget(arch_label)
@@ -394,6 +402,13 @@ class LoraPickerDialog(QDialog):
         self._copy_btn.setToolTip(_("Copy the tags to the clipboard instead of adding to the prompt"))
         self._copy_btn.clicked.connect(self._copy_to_clipboard)
 
+        self._save_wildcard_btn = QPushButton(_("Save as Wildcard…"), self)
+        self._save_wildcard_btn.setToolTip(
+            _("Save the selected LoRAs (with the trigger words chosen above) as a wildcard file")
+        )
+        self._save_wildcard_btn.setVisible(False)
+        self._save_wildcard_btn.clicked.connect(self._save_selection_as_wildcard)
+
         close_btn = QPushButton(_("Close"), self)
         close_btn.clicked.connect(self.close)
 
@@ -408,6 +423,7 @@ class LoraPickerDialog(QDialog):
         bottom_layout.addWidget(self._position_combo)
         bottom_layout.addWidget(self._add_btn)
         bottom_layout.addWidget(self._copy_btn)
+        bottom_layout.addWidget(self._save_wildcard_btn)
         bottom_layout.addWidget(close_btn)
 
         # ── status ──
@@ -629,6 +645,14 @@ class LoraPickerDialog(QDialog):
             self._set_tile_icon(item, lora)
         self._schedule_visible_previews()
 
+    def _save_size_setting(self):
+        settings.lora_browser_size = self._preview_size
+        settings.save()
+
+    def _save_sort_setting(self):
+        settings.lora_browser_sort = self._sort_combo.currentData()
+        settings.save()
+
     # ── lazy preview loading (only visible items) ──
 
     def _schedule_visible_previews(self):
@@ -710,6 +734,25 @@ class LoraPickerDialog(QDialog):
             menu.addAction(_("Open on CivitAI"), lambda: self._open_civitai(lora))
         menu.exec(self._grid.mapToGlobal(pos))
 
+    def _save_selection_as_wildcard(self):
+        items = self._grid.selectedItems()
+        entries = self._multi_lora_entries(items)
+        if not entries:
+            return
+        name, ok = QInputDialog.getText(
+            self, _("Save as Wildcard"), _("Wildcard file name (may include a folder/ prefix):")
+        )
+        if not ok or not name.strip():
+            return
+        if WildcardLibrary.instance().create(name, entries):
+            key = name.strip().strip("/\\").lower()
+            QMessageBox.information(self, _("Saved"), f"__{key}__ " + _("created."))
+        else:
+            QMessageBox.warning(
+                self, _("Save Failed"),
+                _("Could not create the wildcard file - a file with that name may already exist."),
+            )
+
     def _open_civitai(self, lora: LoraInfo):
         QDesktopServices.openUrl(QUrl(f"https://civitai.com/models/{lora.civitai_model_id}"))
 
@@ -737,6 +780,7 @@ class LoraPickerDialog(QDialog):
         self._trigger_combo.setVisible(not is_multi)
         self._format_combo.setVisible(is_multi)
         self._multi_trigger_mode.setVisible(is_multi)
+        self._save_wildcard_btn.setVisible(is_multi)
 
         if is_multi:
             names = ", ".join(i.data(Qt.ItemDataRole.UserRole).display_name for i in items[:3])
@@ -828,7 +872,8 @@ class LoraPickerDialog(QDialog):
             clipboard.setText(addition)
             self._status.setText(_("Copied to clipboard"))
 
-    def _build_multi_lora_block(self, items: list[QListWidgetItem]) -> str:
+    def _multi_lora_entries(self, items: list[QListWidgetItem]) -> list[str]:
+        """One line per selected LoRA: its tag plus trigger words per the current mode."""
         strength = self._strength.value()
         trigger_mode = self._multi_trigger_mode.currentData()
         entries = []
@@ -841,7 +886,10 @@ class LoraPickerDialog(QDialog):
             elif trigger_mode == _MULTI_TRIGGERS_ALL and lora.trigger_words:
                 trigger_text = ", ".join(lora.trigger_words)
             entries.append(f"{tag} {trigger_text}".strip())
+        return entries
 
+    def _build_multi_lora_block(self, items: list[QListWidgetItem]) -> str:
+        entries = self._multi_lora_entries(items)
         fmt = self._format_combo.currentData()
         if fmt == _FORMAT_SEPARATE:  # all LoRAs together, no wildcard
             return "\n".join(entries)

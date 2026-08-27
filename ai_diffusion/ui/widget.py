@@ -72,11 +72,12 @@ from ..text import (
     pattern_layer,
     pattern_lora,
     pattern_weight_expr,
-    pattern_seq_wildcard,
+    pattern_seq_combined,
     pattern_wildcard,
     select_on_cursor_pos,
     str_index_to_char16_index,
 )
+from ..wildcards import WildcardLibrary
 from ..util import ensure
 from . import actions, theme
 from .autocomplete import PromptAutoComplete
@@ -282,12 +283,17 @@ class QueuePopup(QMenu):
 
     def _set_batch_from_combinations(self):
         prompt = self._model.regions.active_or_root.positive
-        matches = pattern_seq_wildcard.findall(prompt)
+        matches = list(pattern_seq_combined.finditer(prompt))
         if not matches:
             return
+        library = WildcardLibrary.instance()
         product = 1
-        for inner in matches:
-            product *= len(inner.split("|"))
+        for match in matches:
+            if match.group(1) is not None:
+                count = len(match.group(1).split("|"))
+            else:
+                count = len(library.get(match.group(2)) or [])
+            product *= max(1, count)
         product = min(product, 1000)
         self._model.batch_count = product
 

@@ -52,6 +52,12 @@ pattern_layer = re.compile(r"<layer:([^>]+)>", re.IGNORECASE)
 pattern_weight_expr = re.compile(r"\([^:()]+:(-?[\d.]+)\)")
 pattern_wildcard = re.compile(r"(\{[^{}]+\|[^{}]+\})")
 pattern_seq_wildcard = re.compile(r"\[\[((?:(?!\]\]).)*)\]\]", re.DOTALL)
+pattern_seq_file_wildcard = re.compile(r"__seq:([\w\-./]+?)__")
+# Matches either kind of sequential group ([[a|b]] or __seq:name__), so both can be
+# combined into a single ordered Cartesian product below.
+pattern_seq_combined = re.compile(
+    r"\[\[((?:(?!\]\]).)*)\]\]|__seq:([\w\-./]+?)__", re.DOTALL
+)
 pattern_file_wildcard = re.compile(r"__([\w\-./]+?)__")
 
 
@@ -157,10 +163,17 @@ def eval_wildcards(text: str, seed: int, batch_index: int = 0):
             # than silently deleting it, so a typo or missing file is obvious
         return rng.choice(options)
 
-    # Cartesian product: each [[...]] group gets its own stride dimension
-    seq_matches = list(pattern_seq_wildcard.finditer(text))
+    # Cartesian product: each [[...]] or __seq:name__ group gets its own stride
+    # dimension, in order of appearance, so a batch cycles through every combination
+    def seq_group_options(match: re.Match[str]) -> list[str]:
+        if match.group(1) is not None:
+            return [o.strip() for o in match.group(1).split("|")]
+        options = wildcard_library.get(match.group(2))
+        return options or [match.group(0)]  # unknown/empty file - leave tag visible
+
+    seq_matches = list(pattern_seq_combined.finditer(text))
     if seq_matches:
-        option_counts = [len(m.group(1).split("|")) for m in seq_matches]
+        option_counts = [max(1, len(seq_group_options(m))) for m in seq_matches]
         strides: list[int] = []
         stride = 1
         for count in option_counts:
@@ -170,12 +183,12 @@ def eval_wildcards(text: str, seed: int, batch_index: int = 0):
         _group = [0]
 
         def replace_sequential(match: re.Match[str]):
-            options = [o.strip() for o in match.group(1).split("|")]
+            options = seq_group_options(match)
             idx = (batch_index // strides[_group[0]]) % len(options)
             _group[0] += 1
             return options[idx]
 
-        text = pattern_seq_wildcard.sub(replace_sequential, text)
+        text = pattern_seq_combined.sub(replace_sequential, text)
 
     for __ in range(10):
         prev = text
