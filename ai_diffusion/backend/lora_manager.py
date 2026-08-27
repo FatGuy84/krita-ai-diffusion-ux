@@ -18,8 +18,9 @@ if TYPE_CHECKING:
 _STRIP_SUFFIXES = (".safetensors", ".pt", ".ckpt", ".bin")
 _CACHE_MAX_AGE = 6 * 3600  # seconds
 # Bump when the cached data shape/semantics change, to invalidate old caches
-# written before a fix (e.g. the favorite flag used to always be False).
-_CACHE_VERSION = 5
+# written before a fix (e.g. the favorite flag used to always be False, or the
+# commercial-use flag counting a "Sell"-only license as permission to sell images).
+_CACHE_VERSION = 6
 
 
 def _clean_name(file_name: str) -> str:
@@ -456,11 +457,13 @@ async def fetch_commercial_use(requests: RequestManager, base_url: str, file_pat
             return ""
         if isinstance(allow, str):
             allow = [allow]
-        # CivitAI values: None / Image / Rent / RentCivit / Sell. Image or Sell means
-        # generated images may be used commercially.
-        if any(v in ("Image", "Sell") for v in allow):
+        # CivitAI values: Image / Rent / RentCivit / Sell. Only "Image" grants the
+        # right to sell generated images, which is the thing that matters here.
+        # "Sell" is about reselling the model itself, "RentCivit"/"Rent" only allow
+        # running it on a generation service - none of those permit selling output.
+        if "Image" in allow:
             return "yes"
-        return "no"  # known, but images not permitted
+        return "no"  # known, but selling images not permitted
     except Exception as e:
         log.warning(f"Could not fetch commercial-use info for '{file_path}': {e}")
         return ""
