@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QSlider,
     QSpinBox,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -74,7 +75,9 @@ def _favorite_icon(base: QIcon) -> QIcon:
     return QIcon(pixmap)
 
 
-class StylePickerDialog(QDialog):
+class StyleBrowser(QWidget):
+    """The style preset list - one tab of StylePickerDialog."""
+
     style_selected = pyqtSignal(Style)
 
     def __init__(self, current: Style, parent: QWidget | None = None):
@@ -88,12 +91,6 @@ class StylePickerDialog(QDialog):
         self._pending_previews: set[str] = set()
         self._view = settings.style_browser_view
         self._thumb_size = settings.style_browser_size
-
-        self.setWindowTitle(_("Select Style"))
-        self.setMinimumSize(420, 480)
-        self.resize(480, 600)
-        self.setModal(False)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowType.Window)
 
         self._search = QLineEdit(self)
         self._search.setPlaceholderText(_("Search styles…"))
@@ -173,13 +170,6 @@ class StylePickerDialog(QDialog):
         )
         hint.setStyleSheet(f"color: {theme.grey}; font-style: italic;")
 
-        self._create_from_ckpt_btn = QPushButton(_("Create from Checkpoints…"), self)
-        self._create_from_ckpt_btn.setToolTip(
-            _("Bulk-create styles from Lora Manager checkpoints, using a template style")
-        )
-        self._create_from_ckpt_btn.clicked.connect(self._open_checkpoint_picker)
-        self._checkpoint_dialog = None
-
         seed_label = QLabel(_("Seed:"), self)
         self._seed_input = QSpinBox(self)
         self._seed_input.setRange(-1, 2**31 - 1)
@@ -203,17 +193,13 @@ class StylePickerDialog(QDialog):
         self._delete_btn.setEnabled(False)
         self._delete_btn.clicked.connect(self._delete_selected)
 
-        close_btn = QPushButton(_("Close"), self)
-        close_btn.clicked.connect(self.close)
         bottom = QHBoxLayout()
-        bottom.addWidget(self._create_from_ckpt_btn)
         bottom.addStretch(1)
         bottom.addWidget(seed_label)
         bottom.addWidget(self._seed_input)
         bottom.addWidget(self._generate_btn)
         bottom.addWidget(self._favorite_btn)
         bottom.addWidget(self._delete_btn)
-        bottom.addWidget(close_btn)
 
         self._status = QLabel(self)
         self._status.setStyleSheet(f"color: {theme.grey}; font-style: italic;")
@@ -373,15 +359,6 @@ class StylePickerDialog(QDialog):
         except RuntimeError:
             pass  # item was removed (list rebuilt) before the fetch finished
 
-    def _open_checkpoint_picker(self):
-        from .checkpoint_picker import CheckpointPickerDialog
-
-        if self._checkpoint_dialog is None:
-            self._checkpoint_dialog = CheckpointPickerDialog(parent=self)
-        self._checkpoint_dialog.show()
-        self._checkpoint_dialog.raise_()
-        self._checkpoint_dialog.activateWindow()
-
     def _client(self):
         if root.connection.state is ConnectionState.connected:
             return root.connection.client_if_connected
@@ -531,7 +508,7 @@ class StylePickerDialog(QDialog):
         if style := Styles.list().find(filename):
             self._current = style
             self.style_selected.emit(style)
-            self.close()
+            self.window().close()  # picking a style is the point - close the window
 
     def _selected_style(self) -> Style | None:
         items = self._list.selectedItems()
@@ -627,3 +604,55 @@ class StylePickerDialog(QDialog):
                 event.accept()
                 return True
         return super().eventFilter(obj, event)
+
+
+class StylePickerDialog(QDialog):
+    """Styles, the checkpoints they can be built from, and CivitAI in one window.
+
+    Creating a style from a checkpoint used to open a second dialog on top of this
+    one, and downloading a checkpoint a third. As tabs they share a window and their
+    state: a checkpoint downloaded in the CivitAI tab shows up in the Checkpoints
+    tab, and styles created there land in the list behind the first tab.
+    """
+
+    style_selected = pyqtSignal(Style)
+
+    def __init__(self, current: Style, parent: QWidget | None = None):
+        super().__init__(parent)
+        from .checkpoint_picker import CheckpointBrowser
+        from .civitai_picker import CivitaiBrowser
+
+        self.setWindowTitle(_("Select Style"))
+        self.setMinimumSize(560, 480)
+        self.resize(880, 620)
+        self.setModal(False)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.Window)
+
+        self.styles = StyleBrowser(current, self)
+        self.checkpoints = CheckpointBrowser(self)
+        self.civitai = CivitaiBrowser("checkpoint", parent=self)
+
+        self._tabs = QTabWidget(self)
+        self._tabs.addTab(self.styles, _("Styles"))
+        self._tabs.addTab(self.checkpoints, _("Checkpoints"))
+        self._tabs.addTab(self.civitai, _("CivitAI"))
+
+        self.styles.style_selected.connect(self.style_selected)
+        # styles created from checkpoints belong in the list right away
+        self.checkpoints.styles_created.connect(lambda _count: self.styles._reload())
+
+        close_btn = QPushButton(_("Close"), self)
+        close_btn.clicked.connect(self.close)
+        bottom = QHBoxLayout()
+        bottom.addStretch(1)
+        bottom.addWidget(close_btn)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self._tabs, 1)
+        layout.addLayout(bottom)
+        self.setLayout(layout)
+
+    def set_current(self, style: Style):
+        """Point the style list at the style that is active now, for a reopen."""
+        self.styles._current = style
+        self.styles._reload()

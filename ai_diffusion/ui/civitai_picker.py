@@ -14,7 +14,6 @@ from PyQt5.QtGui import (
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -134,15 +133,22 @@ def _size_label(mb: float) -> str:
     return f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb:.0f} MB"
 
 
-class CivitaiPickerDialog(QDialog):
+class CivitaiBrowser(QWidget):
     """Search civitai.com and download models straight into the local library.
+
+    Lives as a tab next to the local browsers rather than as a dialog of its own,
+    so remote and local models of the same kind sit in one place. `kind` fixes which
+    of the two it searches for.
 
     The plugin only searches; the download itself is handed to ComfyUI-Lora-Manager,
     which knows the folder layout and writes metadata and previews alongside the file.
     """
 
-    def __init__(self, current_arch: str = "", parent: QWidget | None = None):
+    def __init__(
+        self, kind: str = _KIND_LORA, current_arch: str = "", parent: QWidget | None = None
+    ):
         super().__init__(parent)
+        self._kind = kind
         self._models: list[CivitaiModel] = []
         self._cursor = ""
         self._loading = False
@@ -160,10 +166,6 @@ class CivitaiPickerDialog(QDialog):
         self._batch_cancelled = False
         self._batch_label = ""
 
-        self.setWindowTitle(_("CivitAI Browser"))
-        self.setMinimumSize(720, 520)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowType.Window)
-
         # ── search row ──
         self._search = QLineEdit(self)
         self._search.setPlaceholderText(_("Search CivitAI…"))
@@ -177,19 +179,13 @@ class CivitaiPickerDialog(QDialog):
         self._refresh_btn.setIcon(theme.icon("reset"))
         self._refresh_btn.setToolTip(
             _(
-                "Run the search again and reload everything cached in this dialog:"
+                "Run the search again and reload everything cached here:"
                 " previews, the tag list, the download folders, and which models are"
                 " already in your library."
             )
         )
         self._refresh_btn.setAutoRaise(True)
         self._refresh_btn.clicked.connect(self._refresh_all)
-
-        self._kind_combo = QComboBox(self)
-        self._kind_combo.addItem(_("LoRA"), _KIND_LORA)
-        self._kind_combo.addItem(_("Checkpoint"), _KIND_CHECKPOINT)
-        self._kind_combo.currentIndexChanged.connect(self._start_search)
-        self._kind_combo.currentIndexChanged.connect(self._load_locations)
 
         self._sort_combo = QComboBox(self)
         for option in civitai.sort_options:
@@ -205,7 +201,6 @@ class CivitaiPickerDialog(QDialog):
         row1.addWidget(self._search, 1)
         row1.addWidget(search_btn)
         row1.addWidget(self._refresh_btn)
-        row1.addWidget(self._kind_combo)
         row1.addWidget(self._sort_combo)
         row1.addWidget(self._period_combo)
 
@@ -362,14 +357,10 @@ class CivitaiPickerDialog(QDialog):
         self._download_btn = QPushButton(theme.icon("web-connection"), _("Download"), self)
         self._download_btn.setEnabled(False)
         self._download_btn.clicked.connect(self._download_selected)
-        close_btn = QPushButton(_("Close"), self)
-        close_btn.clicked.connect(self.close)
-
         bottom = QHBoxLayout()
         bottom.addWidget(self._selected_label, 1)
         bottom.addWidget(self._version_combo)
         bottom.addWidget(self._download_btn)
-        bottom.addWidget(close_btn)
 
         self._status = QLabel("", self)
         self._status.setStyleSheet(f"color: {theme.grey}; font-style: italic;")
@@ -442,7 +433,7 @@ class CivitaiPickerDialog(QDialog):
         client = root.connection.client_if_connected
         if client is None:
             return
-        kind = "checkpoints" if self._kind_combo.currentData() == _KIND_CHECKPOINT else "loras"
+        kind = self._library_kind()
         roots = await fetch_model_roots(client._requests, client.url, kind)
         folders = await fetch_folders(client._requests, client.url, kind)
         with theme.SignalBlocker(self._root_combo):
@@ -498,8 +489,9 @@ class CivitaiPickerDialog(QDialog):
         if not hashes:
             return
         self._checked_hashes.update(hashes)
-        kind = "checkpoints" if self._kind_combo.currentData() == _KIND_CHECKPOINT else "loras"
-        found = await fetch_installed_hashes(client._requests, client.url, hashes, kind)
+        found = await fetch_installed_hashes(
+            client._requests, client.url, hashes, self._library_kind()
+        )
         if not found:
             return
         self._installed_hashes.update(found)
@@ -516,9 +508,13 @@ class CivitaiPickerDialog(QDialog):
     # ── search ──
 
     def _current_types(self) -> list[str]:
-        if self._kind_combo.currentData() == _KIND_CHECKPOINT:
+        if self._kind == _KIND_CHECKPOINT:
             return civitai.checkpoint_types
         return civitai.lora_types
+
+    def _library_kind(self) -> str:
+        """Lora Manager's url prefix for this browser's model kind."""
+        return "checkpoints" if self._kind == _KIND_CHECKPOINT else "loras"
 
     def _current_base_models(self) -> list[str]:
         arch = self._arch_combo.currentData()
@@ -1012,6 +1008,10 @@ class CivitaiPickerDialog(QDialog):
         self._installed_models.add(model.id)
         self._apply_filter()
 
-    def closeEvent(self, e):
-        self._preview_timer.stop()
-        super().closeEvent(e)
+    def hideEvent(self, a0):
+        self._preview_timer.stop()  # nothing to load while the tab is not visible
+        super().hideEvent(a0)
+
+    def showEvent(self, a0):
+        super().showEvent(a0)
+        self._schedule_visible_previews()  # tab came back - fill in what is on screen

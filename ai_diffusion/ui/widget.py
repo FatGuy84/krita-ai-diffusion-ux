@@ -417,8 +417,7 @@ class StyleSelectWidget(QWidget):
             self._picker = StylePickerDialog(self._value, parent=self)
             self._picker.style_selected.connect(self._on_style_picked)
         else:
-            self._picker._current = self._value
-            self._picker._reload()
+            self._picker.set_current(self._value)
         self._picker.show()
         self._picker.raise_()
         self._picker.activateWindow()

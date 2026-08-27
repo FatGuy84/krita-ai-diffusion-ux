@@ -24,6 +24,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSlider,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -216,7 +217,9 @@ def _extract_video_frame(data: bytes) -> bytes | None:
                 p.unlink(missing_ok=True)
 
 
-class LoraPickerDialog(QDialog):
+class LoraBrowser(QWidget):
+    """The local LoRA library - one tab of LoraPickerDialog."""
+
     lora_selected = pyqtSignal(str, float)  # name, strength
 
     def __init__(self, current_arch: str, parent: QWidget | None = None):
@@ -229,13 +232,6 @@ class LoraPickerDialog(QDialog):
         self._pending_commercial: set[str] = set()
         self._loading = False
         self._preview_size = settings.lora_browser_size
-
-        self.setWindowTitle(_("LoRA Browser"))
-        self.setMinimumSize(640, 480)
-        self.resize(800, 560)
-        # Non-modal: Krita stays interactive while this dialog is open
-        self.setModal(False)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowType.Window)
 
         # ── row 1: search ──
         self._search = QLineEdit(self)
@@ -409,9 +405,6 @@ class LoraPickerDialog(QDialog):
         self._save_wildcard_btn.setVisible(False)
         self._save_wildcard_btn.clicked.connect(self._save_selection_as_wildcard)
 
-        close_btn = QPushButton(_("Close"), self)
-        close_btn.clicked.connect(self.close)
-
         bottom_layout = QHBoxLayout()
         bottom_layout.addWidget(self._selected_label, 1)
         bottom_layout.addWidget(strength_label)
@@ -424,7 +417,6 @@ class LoraPickerDialog(QDialog):
         bottom_layout.addWidget(self._add_btn)
         bottom_layout.addWidget(self._copy_btn)
         bottom_layout.addWidget(self._save_wildcard_btn)
-        bottom_layout.addWidget(close_btn)
 
         # ── status ──
         self._status = QLabel(_("Loading…"), self)
@@ -489,13 +481,14 @@ class LoraPickerDialog(QDialog):
         self._rescan_btn.setEnabled(True)
         self._load_loras(force_refresh=True)  # reload the browser list once the scan is done
 
-    def closeEvent(self, e):
-        # drop the pending scan callback so it doesn't fire on a destroyed dialog
+    def shutdown(self):
+        # drop the pending scan callback so it doesn't fire on a destroyed browser.
+        # Not tied to hiding: switching to another tab while a scan runs must not
+        # lose the callback that re-enables the button when it finishes.
         try:
             root.connection.models_changed.disconnect(self._on_server_scanned)
         except (TypeError, RuntimeError):
             pass
-        super().closeEvent(e)
 
     async def _fetch_progressive(self, client):
         try:
@@ -855,8 +848,13 @@ class LoraPickerDialog(QDialog):
             region.positive = current.rstrip("\n") + "\n" + addition
 
     def _insert_at_cursor(self, addition: str) -> bool:
-        # the dialog's parent is the prompt widget that owns the positive field
-        widget = getattr(self.parent(), "positive", None)
+        # the prompt widget that owns the positive field is an ancestor - walk up
+        # rather than checking the direct parent, which is the dialog holding the tabs
+        widget = None
+        node = self.parent()
+        while node is not None and widget is None:
+            widget = getattr(node, "positive", None)
+            node = node.parent()
         if widget is None or not hasattr(widget, "textCursor"):
             return False
         cursor = widget.textCursor()
@@ -897,3 +895,44 @@ class LoraPickerDialog(QDialog):
         if fmt == _FORMAT_SEQUENTIAL:
             return f"[[\n{joined}\n]]"
         return f"{{\n{joined}\n}}"
+
+
+class LoraPickerDialog(QDialog):
+    """The LoRA library and CivitAI search as two tabs of one window.
+
+    Looking for a LoRA and looking for one to download are the same errand, so they
+    share a window instead of the second one being another button in the prompt bar.
+    """
+
+    def __init__(self, current_arch: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        from .civitai_picker import CivitaiBrowser  # imported here: it imports from us
+
+        self.setWindowTitle(_("LoRA Browser"))
+        self.setMinimumSize(640, 480)
+        self.resize(880, 620)
+        # Non-modal: Krita stays interactive while this dialog is open
+        self.setModal(False)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.Window)
+
+        self.library = LoraBrowser(current_arch, self)
+        self.civitai = CivitaiBrowser("lora", current_arch, self)
+
+        self._tabs = QTabWidget(self)
+        self._tabs.addTab(self.library, _("Library"))
+        self._tabs.addTab(self.civitai, _("CivitAI"))
+
+        close_btn = QPushButton(_("Close"), self)
+        close_btn.clicked.connect(self.close)
+        bottom = QHBoxLayout()
+        bottom.addStretch(1)
+        bottom.addWidget(close_btn)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self._tabs, 1)
+        layout.addLayout(bottom)
+        self.setLayout(layout)
+
+    def closeEvent(self, a0):
+        self.library.shutdown()
+        super().closeEvent(a0)

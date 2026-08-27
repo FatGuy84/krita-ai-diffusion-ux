@@ -184,7 +184,7 @@ class ActiveRegionWidget(QFrame):
         self._lora_browse_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._lora_browse_button.setIcon(theme.icon("lora"))
         self._lora_browse_button.setText(_("LoRA"))
-        self._lora_browse_button.setToolTip(_("Browse and add LoRAs"))
+        self._lora_browse_button.setToolTip(_("Browse LoRAs and search CivitAI"))
         self._lora_browse_button.setAutoRaise(True)
         self._lora_browse_button.clicked.connect(self._open_lora_picker)
         self._lora_dialog: LoraPickerDialog | None = None
@@ -206,15 +206,6 @@ class ActiveRegionWidget(QFrame):
         self._wildcard_browse_button.setAutoRaise(True)
         self._wildcard_browse_button.clicked.connect(self._open_wildcard_picker)
         self._wildcard_dialog = None
-
-        self._civitai_browse_button = QToolButton(self)
-        self._civitai_browse_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._civitai_browse_button.setIcon(theme.icon("web-connection"))
-        self._civitai_browse_button.setText(_("CivitAI"))
-        self._civitai_browse_button.setToolTip(_("Search CivitAI and download models"))
-        self._civitai_browse_button.setAutoRaise(True)
-        self._civitai_browse_button.clicked.connect(self._open_civitai_picker)
-        self._civitai_dialog = None
 
         self._enhance_button = QToolButton(self)
         self._enhance_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
@@ -248,7 +239,6 @@ class ActiveRegionWidget(QFrame):
         prompt_tools_layout.addWidget(self._wildcard_browse_button)
         prompt_tools_layout.addWidget(self._recipe_browse_button)
         prompt_tools_layout.addWidget(self._lora_browse_button)
-        prompt_tools_layout.addWidget(self._civitai_browse_button)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -772,17 +762,6 @@ class ActiveRegionWidget(QFrame):
         self._recipe_dialog.show()
         self._recipe_dialog.raise_()
         self._recipe_dialog.activateWindow()
-
-    def _open_civitai_picker(self):
-        from .civitai_picker import CivitaiPickerDialog
-
-        if self._civitai_dialog is None:
-            model = root.active_model
-            arch = model.arch.name if model else ""
-            self._civitai_dialog = CivitaiPickerDialog(arch, parent=self)
-        self._civitai_dialog.show()
-        self._civitai_dialog.raise_()
-        self._civitai_dialog.activateWindow()
 
     def _open_wildcard_picker(self):
         from .wildcard_picker import WildcardPickerDialog

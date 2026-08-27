@@ -172,9 +172,9 @@ like becomes reusable without retyping anything.
 
 ### CivitAI Browser
 
-A **CivitAI** button next to the LoRA and Recipe buttons opens a search over
-civitai.com without leaving Krita, and downloads straight into your local
-library. The plugin only searches — the download itself is handed to
+The **CivitAI** tab — in the LoRA browser for LoRAs, in the style dialog for
+checkpoints — searches civitai.com without leaving Krita and downloads straight
+into your local library. The plugin only searches — the download itself is handed to
 [ComfyUI-Lora-Manager](https://github.com/willmiao/ComfyUI-Lora-Manager), which
 already knows your folder layout and writes metadata and preview images next to
 the file, so a downloaded model shows up fully described in the LoRA browser.
@@ -230,6 +230,12 @@ the file, so a downloaded model shows up fully described in the LoRA browser.
   tile costs ~50 KB instead of the multi-megabyte original. Where CivitAI's search
   endpoint returns no image at all (it does that for models rated R and above), the
   browser fetches one from the model's detail endpoint for visible tiles only.
+
+The dialogs are organised as tabs rather than windows opening on top of windows:
+the style dialog holds **Styles**, **Checkpoints** and **CivitAI**, and the LoRA
+browser holds **Library** and **CivitAI**. Tabs of one window share their state —
+a checkpoint downloaded in the CivitAI tab appears in the Checkpoints tab, and
+styles created there land in the style list behind the first tab.
 
 ### Style Picker
 

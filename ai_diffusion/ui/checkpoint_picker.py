@@ -8,7 +8,6 @@ from PyQt5.QtGui import QColor, QIcon, QPainter, QPixmap
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -70,9 +69,13 @@ _NSFW_SAFE = "safe"
 _NSFW_HIDE_EXPLICIT = "hide_explicit"
 
 
-class CheckpointPickerDialog(QDialog):
+class CheckpointBrowser(QWidget):
     """Browse Lora Manager checkpoints and bulk-create Krita styles from them,
-    cloning the settings of a chosen template style."""
+    cloning the settings of a chosen template style.
+
+    Embedded as a tab of the style dialog: creating a style from a checkpoint is a
+    step of picking a style, not a separate errand, and a dialog opened out of a
+    dialog was the wrong shape for it."""
 
     styles_created = pyqtSignal(int)  # number of styles created
 
@@ -84,12 +87,6 @@ class CheckpointPickerDialog(QDialog):
         self._pending_previews: set[str] = set()
         self._loading = False
         self._preview_size = settings.checkpoint_browser_size
-
-        self.setWindowTitle(_("Create Styles from Checkpoints"))
-        self.setMinimumSize(640, 480)
-        self.resize(880, 620)
-        self.setModal(False)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowType.Window)
 
         # ── row 1: search + refresh ──
         self._search = QLineEdit(self)
@@ -211,9 +208,6 @@ class CheckpointPickerDialog(QDialog):
         self._create_btn.setEnabled(False)
         self._create_btn.clicked.connect(self._create_styles)
 
-        close_btn = QPushButton(_("Close"), self)
-        close_btn.clicked.connect(self.close)
-
         bottom = QHBoxLayout()
         bottom.addWidget(self._selected_label, 1)
         bottom.addWidget(template_label)
@@ -222,7 +216,6 @@ class CheckpointPickerDialog(QDialog):
         bottom.addWidget(self._seed_input)
         bottom.addWidget(self._generate_btn)
         bottom.addWidget(self._create_btn)
-        bottom.addWidget(close_btn)
 
         # ── status ──
         self._status = QLabel(_("Loading…"), self)
