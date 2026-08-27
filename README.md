@@ -89,6 +89,14 @@ Unknown/misspelled `__name__` references are left visible in the evaluated
 prompt rather than silently disappearing, so a typo or missing file is easy
 to spot instead of just producing a slightly-off image.
 
+The browser has two tabs. **Library** lists the files and edits them in place
+(create, rename, edit, save). **Generate** writes a new one with the local
+language model: name a category — hairstyles, hair colors, poses, outfits —
+and it produces a list of interchangeable options, which you can prune before
+saving. Entries are written in rounds rather than one call each, since an entry
+is only a few words and per-call model overhead would dominate. Saving switches
+to the Library tab with the new file selected, ready to edit.
+
 ### LoRA Browser
 
 Click the **LoRA** button in the prompt field to open a visual LoRA picker

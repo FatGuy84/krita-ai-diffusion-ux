@@ -375,7 +375,6 @@ class PoolMode(Enum):
 
     variation = "variation"  # variations of the prompt that is already there
     random = "random"  # fresh scenes for a theme
-    terms = "terms"  # short fragments of one category (hairstyles, poses, ...)
 
 
 _pool_instructions = {

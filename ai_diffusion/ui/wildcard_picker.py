@@ -17,6 +17,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSplitter,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -39,7 +40,7 @@ _SORT_NAME = "name"
 _SORT_DATE = "date"
 
 
-class WildcardPickerDialog(QDialog):
+class WildcardBrowser(QWidget):
     """Browse file-based wildcards (<user data>/wildcards/*.txt, one option per line,
     __name__ or __folder/name__ in the prompt) and insert a reference tag."""
 
@@ -51,12 +52,6 @@ class WildcardPickerDialog(QDialog):
         self._current_name: str | None = None
         self._dirty = False
         self._loading_preview = False
-
-        self.setWindowTitle(_("Wildcards"))
-        self.setMinimumSize(480, 360)
-        self.resize(560, 420)
-        self.setModal(False)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowType.Window)
 
         self._search = QLineEdit(self)
         self._search.setPlaceholderText(_("Search wildcards…"))
@@ -176,9 +171,6 @@ class WildcardPickerDialog(QDialog):
         self._add_btn.setEnabled(False)
         self._add_btn.clicked.connect(self._add_to_prompt)
 
-        close_btn = QPushButton(_("Close"), self)
-        close_btn.clicked.connect(self.close)
-
         bottom = QHBoxLayout()
         bottom.addWidget(self._selected_label, 1)
         bottom.addWidget(mode_label)
@@ -186,7 +178,6 @@ class WildcardPickerDialog(QDialog):
         bottom.addWidget(position_label)
         bottom.addWidget(self._position_combo)
         bottom.addWidget(self._add_btn)
-        bottom.addWidget(close_btn)
 
         layout = QVBoxLayout()
         layout.addLayout(row1)
@@ -376,11 +367,14 @@ class WildcardPickerDialog(QDialog):
                 _("Could not rename the file - the target name may already exist or be invalid."),
             )
 
-    def closeEvent(self, event):
-        if self._dirty and not self._confirm_discard():
-            event.ignore()
-            return
-        super().closeEvent(event)
+    def may_close(self) -> bool:
+        """False when unsaved edits should keep the window open."""
+        return not self._dirty or self._confirm_discard()
+
+    def select_wildcard(self, name: str):
+        """Show a file that was just created elsewhere - the generator tab uses this."""
+        self._reload()
+        self._select_item_by_name(name)
 
     def _build_tag(self, name: str) -> str:
         mode = self._mode_combo.currentData()
@@ -414,10 +408,65 @@ class WildcardPickerDialog(QDialog):
             region.positive = current.rstrip("\n") + "\n" + tag
 
     def _insert_at_cursor(self, text: str) -> bool:
-        widget = getattr(self.parent(), "positive", None)
+        # the prompt widget is an ancestor, not the direct parent: that is the dialog
+        widget = None
+        node = self.parent()
+        while node is not None and widget is None:
+            widget = getattr(node, "positive", None)
+            node = node.parent()
         if widget is None or not hasattr(widget, "textCursor"):
             return False
         cursor = widget.textCursor()
         cursor.insertText(text)
         widget.setTextCursor(cursor)
         return True
+
+
+class WildcardPickerDialog(QDialog):
+    """The wildcard library and the generator that fills it, as two tabs.
+
+    Generating a term list produces a file for the library, so it belongs next to it
+    rather than in the prompt batch dialog, where it had to switch off half the form
+    it was sitting in.
+    """
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        from .wildcard_generate import WildcardGenerator
+
+        self.setWindowTitle(_("Wildcards"))
+        self.setMinimumSize(480, 360)
+        self.resize(620, 480)
+        self.setModal(False)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.Window)
+
+        self.library = WildcardBrowser(self)
+        self.generator = WildcardGenerator(self)
+        self.generator.wildcard_created.connect(self._on_wildcard_created)
+
+        self._tabs = QTabWidget(self)
+        self._tabs.addTab(self.library, _("Library"))
+        self._tabs.addTab(self.generator, _("Generate"))
+
+        close_btn = QPushButton(_("Close"), self)
+        close_btn.clicked.connect(self.close)
+        bottom = QHBoxLayout()
+        bottom.addStretch(1)
+        bottom.addWidget(close_btn)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self._tabs, 1)
+        layout.addLayout(bottom)
+        self.setLayout(layout)
+
+    def _on_wildcard_created(self, name: str):
+        # switch to the new file rather than leaving it invisible behind the tab
+        self.library.select_wildcard(name)
+        self._tabs.setCurrentWidget(self.library)
+
+    def closeEvent(self, a0):
+        if not self.library.may_close():
+            a0.ignore()
+            return
+        self.generator.shutdown()
+        super().closeEvent(a0)
