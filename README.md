@@ -201,6 +201,9 @@ the file, so a downloaded model shows up fully described in the LoRA browser.
   `Rent`/`RentCivit` only allow running it on a generation service. The
   **"Sellable images only"** checkbox filters the results down to the green ones,
   and the tooltip always shows the raw license values.
+* **Refresh** re-runs the search and drops everything the dialog caches — previews,
+  the tag list, the download folders and the set of models already in your library —
+  so a model downloaded elsewhere shows up as installed without reopening.
 * **Downloads** show progress, speed and a cancel button. Duplicate downloads are
   refused by Lora Manager, early-access models are marked and cannot be
   downloaded (they need a purchase on CivitAI first).

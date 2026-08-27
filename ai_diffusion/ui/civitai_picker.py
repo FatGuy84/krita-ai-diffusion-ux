@@ -152,6 +152,18 @@ class CivitaiPickerDialog(QDialog):
         search_btn = QPushButton(_("Search"), self)
         search_btn.clicked.connect(self._start_search)
 
+        self._refresh_btn = QToolButton(self)
+        self._refresh_btn.setIcon(theme.icon("reset"))
+        self._refresh_btn.setToolTip(
+            _(
+                "Run the search again and reload everything cached in this dialog:"
+                " previews, the tag list, the download folders, and which models are"
+                " already in your library."
+            )
+        )
+        self._refresh_btn.setAutoRaise(True)
+        self._refresh_btn.clicked.connect(self._refresh_all)
+
         self._kind_combo = QComboBox(self)
         self._kind_combo.addItem(_("LoRA"), _KIND_LORA)
         self._kind_combo.addItem(_("Checkpoint"), _KIND_CHECKPOINT)
@@ -171,6 +183,7 @@ class CivitaiPickerDialog(QDialog):
         row1 = QHBoxLayout()
         row1.addWidget(self._search, 1)
         row1.addWidget(search_btn)
+        row1.addWidget(self._refresh_btn)
         row1.addWidget(self._kind_combo)
         row1.addWidget(self._sort_combo)
         row1.addWidget(self._period_combo)
@@ -340,6 +353,15 @@ class CivitaiPickerDialog(QDialog):
         self._load_locations()
         self._start_search()
 
+    def _refresh_all(self):
+        """Everything in this dialog is cached one way or another - previews, the tag
+        vocabulary, the folder list and the installed-model set. Reload the lot, so
+        one button covers "I downloaded something elsewhere" as well as stale results."""
+        self._refresh_installed()
+        self._load_tags()
+        self._load_locations()
+        self._start_search()
+
     def _api_key(self) -> str:
         return settings.civitai_api_key.strip()
 
@@ -407,16 +429,18 @@ class CivitaiPickerDialog(QDialog):
         marked as installed. Uses the LoRA browser's cache (checkpoints are not
         cached, so those stay unmarked) - a miss only means a tile is not marked,
         and Lora Manager still refuses a duplicate download."""
-        self._installed_hashes = set()
-        self._installed_models = set()
         client = root.connection.client_if_connected
         if client is None:
             return
-        for lora in load_cached_loras(client.url) or []:
-            if lora.sha256:
-                self._installed_hashes.add(lora.sha256.upper())
-            if lora.civitai_model_id:
-                self._installed_models.add(int(lora.civitai_model_id))
+        cached = load_cached_loras(client.url)
+        if not cached:
+            # a download of our own drops the cache, and it is only rebuilt when the
+            # LoRA browser next runs - keep what we know rather than losing the marks
+            return
+        self._installed_hashes = {lora.sha256.upper() for lora in cached if lora.sha256}
+        self._installed_models = {
+            int(lora.civitai_model_id) for lora in cached if lora.civitai_model_id
+        }
 
     def _state_of(self, model: CivitaiModel, version: CivitaiVersion) -> str:
         file = version.primary_file
