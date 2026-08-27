@@ -86,8 +86,8 @@ class StylePickerDialog(QDialog):
         self._ckpt_previews: dict[str, str] = {}  # checkpoint stem -> preview url
         self._preview_cache: dict[str, QPixmap] = {}  # stem -> pixmap
         self._pending_previews: set[str] = set()
-        self._view = _VIEW_LIST
-        self._thumb_size = 64
+        self._view = settings.style_browser_view
+        self._thumb_size = settings.style_browser_size
 
         self.setWindowTitle(_("Select Style"))
         self.setMinimumSize(420, 480)
@@ -117,12 +117,18 @@ class StylePickerDialog(QDialog):
         self._view_combo = QComboBox(self)
         self._view_combo.addItem(_("List"), _VIEW_LIST)
         self._view_combo.addItem(_("Grid"), _VIEW_GRID)
+        idx = self._view_combo.findData(self._view)
+        self._view_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._view_combo.currentIndexChanged.connect(self._set_view_mode)
+        self._view_combo.currentIndexChanged.connect(self._save_view_setting)
 
         self._sort_combo = QComboBox(self)
         self._sort_combo.addItem(_("Name"), _SORT_NAME)
         self._sort_combo.addItem(_("Date Added"), _SORT_DATE)
+        idx = self._sort_combo.findData(settings.style_browser_sort)
+        self._sort_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._sort_combo.currentIndexChanged.connect(self._apply_filter)
+        self._sort_combo.currentIndexChanged.connect(self._save_sort_setting)
 
         size_label = QLabel(_("Size:"), self)
         self._size_slider = QSlider(Qt.Orientation.Horizontal, self)
@@ -131,6 +137,7 @@ class StylePickerDialog(QDialog):
         self._size_slider.setValue(self._thumb_size)
         self._size_slider.setFixedWidth(90)
         self._size_slider.valueChanged.connect(self._on_size_changed)
+        self._size_slider.sliderReleased.connect(self._save_size_setting)
 
         row1 = QHBoxLayout()
         row1.addWidget(self._search, 1)
@@ -259,6 +266,18 @@ class StylePickerDialog(QDialog):
     def _on_size_changed(self, value: int):
         self._thumb_size = value
         self._set_view_mode()
+
+    def _save_size_setting(self):
+        settings.style_browser_size = self._thumb_size
+        settings.save()
+
+    def _save_sort_setting(self):
+        settings.style_browser_sort = self._sort_combo.currentData()
+        settings.save()
+
+    def _save_view_setting(self):
+        settings.style_browser_view = self._view_combo.currentData()
+        settings.save()
 
     # ── checkpoint thumbnails from Lora Manager ──
 

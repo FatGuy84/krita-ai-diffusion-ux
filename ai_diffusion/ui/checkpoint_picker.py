@@ -34,6 +34,7 @@ from ..backend.lora_manager import (
 )
 from ..localization import translate as _
 from ..model.root import root
+from ..settings import settings
 from ..style import Styles
 from . import theme
 from .lora_picker import _extract_video_frame, _ffmpeg_path, _is_video_url, _visible_range, _with_tag
@@ -82,7 +83,7 @@ class CheckpointPickerDialog(QDialog):
         self._preview_cache: dict[str, QPixmap] = {}
         self._pending_previews: set[str] = set()
         self._loading = False
-        self._preview_size = _PREVIEW_SIZE_DEFAULT
+        self._preview_size = settings.checkpoint_browser_size
 
         self.setWindowTitle(_("Create Styles from Checkpoints"))
         self.setMinimumSize(640, 480)
@@ -134,15 +135,19 @@ class CheckpointPickerDialog(QDialog):
         self._sort_combo = QComboBox(self)
         self._sort_combo.addItem(_("Name"), _SORT_NAME)
         self._sort_combo.addItem(_("Date Added"), _SORT_DATE)
+        idx = self._sort_combo.findData(settings.checkpoint_browser_sort)
+        self._sort_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._sort_combo.currentIndexChanged.connect(self._apply_filter)
+        self._sort_combo.currentIndexChanged.connect(self._save_sort_setting)
 
         size_label = QLabel(_("Size:"), self)
         self._size_slider = QSlider(Qt.Orientation.Horizontal, self)
         self._size_slider.setMinimum(_PREVIEW_SIZE_MIN)
         self._size_slider.setMaximum(_PREVIEW_SIZE_MAX)
-        self._size_slider.setValue(_PREVIEW_SIZE_DEFAULT)
+        self._size_slider.setValue(self._preview_size)
         self._size_slider.setFixedWidth(90)
         self._size_slider.valueChanged.connect(self._on_preview_size_changed)
+        self._size_slider.sliderReleased.connect(self._save_size_setting)
 
         row2 = QHBoxLayout()
         row2.addWidget(base_label)
@@ -393,6 +398,14 @@ class CheckpointPickerDialog(QDialog):
             item.setSizeHint(self._grid.gridSize())
             self._set_tile_icon(item, c)
         self._schedule_visible_previews()
+
+    def _save_size_setting(self):
+        settings.checkpoint_browser_size = self._preview_size
+        settings.save()
+
+    def _save_sort_setting(self):
+        settings.checkpoint_browser_sort = self._sort_combo.currentData()
+        settings.save()
 
     # ── lazy preview loading ──
 

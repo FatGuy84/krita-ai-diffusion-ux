@@ -23,6 +23,7 @@ from .. import eventloop
 from ..backend.lora_manager import RecipeInfo, fetch_preview_bytes, fetch_recipes
 from ..localization import translate as _
 from ..model.root import root
+from ..settings import settings
 from . import theme
 from .lora_picker import _visible_range
 
@@ -45,7 +46,7 @@ class RecipePickerDialog(QDialog):
         self._preview_cache: dict[str, QPixmap] = {}  # original, unscaled
         self._pending_previews: set[str] = set()
         self._loading = False
-        self._preview_size = _PREVIEW_SIZE_DEFAULT
+        self._preview_size = settings.recipe_browser_size
 
         self.setWindowTitle(_("Recipe Browser"))
         self.setMinimumSize(640, 480)
@@ -81,15 +82,19 @@ class RecipePickerDialog(QDialog):
         self._sort_combo = QComboBox(self)
         self._sort_combo.addItem(_("Name"), _SORT_NAME)
         self._sort_combo.addItem(_("Date Added"), _SORT_DATE)
+        idx = self._sort_combo.findData(settings.recipe_browser_sort)
+        self._sort_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._sort_combo.currentIndexChanged.connect(self._apply_filter)
+        self._sort_combo.currentIndexChanged.connect(self._save_sort_setting)
 
         size_label = QLabel(_("Size:"), self)
         self._size_slider = QSlider(Qt.Orientation.Horizontal, self)
         self._size_slider.setMinimum(_PREVIEW_SIZE_MIN)
         self._size_slider.setMaximum(_PREVIEW_SIZE_MAX)
-        self._size_slider.setValue(_PREVIEW_SIZE_DEFAULT)
+        self._size_slider.setValue(self._preview_size)
         self._size_slider.setFixedWidth(90)
         self._size_slider.valueChanged.connect(self._on_preview_size_changed)
+        self._size_slider.sliderReleased.connect(self._save_size_setting)
 
         row2 = QHBoxLayout()
         row2.addWidget(arch_label)
@@ -270,6 +275,14 @@ class RecipePickerDialog(QDialog):
             if recipe.id in self._preview_cache:
                 item.setIcon(self._scaled_icon(recipe.id))
         self._schedule_visible_previews()
+
+    def _save_size_setting(self):
+        settings.recipe_browser_size = self._preview_size
+        settings.save()
+
+    def _save_sort_setting(self):
+        settings.recipe_browser_sort = self._sort_combo.currentData()
+        settings.save()
 
     # ── lazy preview loading ──
 

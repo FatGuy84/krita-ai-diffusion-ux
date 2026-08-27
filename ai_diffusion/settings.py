@@ -631,6 +631,33 @@ class Settings(QObject):
     last_news: str
     _last_news = Setting("Last seen news digest", "")
 
+    # Remembered view state (thumbnail size / list-vs-grid / sort order) for the
+    # browser dialogs, so they reopen the way the user last left them.
+    lora_browser_size: int
+    _lora_browser_size = Setting("LoRA Browser Thumbnail Size", 96)
+    lora_browser_sort: str
+    _lora_browser_sort = Setting("LoRA Browser Sort", "name")
+
+    recipe_browser_size: int
+    _recipe_browser_size = Setting("Recipe Browser Thumbnail Size", 128)
+    recipe_browser_sort: str
+    _recipe_browser_sort = Setting("Recipe Browser Sort", "name")
+
+    style_browser_size: int
+    _style_browser_size = Setting("Style Browser Thumbnail Size", 64)
+    style_browser_sort: str
+    _style_browser_sort = Setting("Style Browser Sort", "name")
+    style_browser_view: str
+    _style_browser_view = Setting("Style Browser View Mode", "list")
+
+    checkpoint_browser_size: int
+    _checkpoint_browser_size = Setting("Checkpoint Browser Thumbnail Size", 128)
+    checkpoint_browser_sort: str
+    _checkpoint_browser_sort = Setting("Checkpoint Browser Sort", "name")
+
+    wildcard_browser_sort: str
+    _wildcard_browser_sort = Setting("Wildcard Browser Sort", "name")
+
     # Folder where intermediate images are stored for debug purposes (default: None)
     debug_image_folder = os.environ.get("KRITA_AI_DIFFUSION_DEBUG_IMAGE")
 
