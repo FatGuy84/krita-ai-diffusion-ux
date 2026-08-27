@@ -206,6 +206,13 @@ the file, so a downloaded model shows up fully described in the LoRA browser.
 * **Refresh** re-runs the search and drops everything the dialog caches — previews,
   the tag list, the download folders and the set of models already in your library —
   so a model downloaded elsewhere shows up as installed without reopening.
+* **Multi-select and batch download**: ctrl/shift-click several tiles and download
+  them in one go. The bar shows the combined size and how many of the selected
+  models you already have; those and early-access ones are skipped instead of
+  failing. Progress counts through the batch (`3/12`), cancel stops the running
+  transfer and the rest of the queue, and a summary reports what got through.
+  Downloads run one after another — Lora Manager has no server-side queue worker,
+  and parallel transfers would only split the same bandwidth.
 * **Downloads** show progress, speed and a cancel button. Duplicate downloads are
   refused by Lora Manager, early-access models are marked and cannot be
   downloaded (they need a purchase on CivitAI first).

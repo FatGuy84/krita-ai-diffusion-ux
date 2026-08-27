@@ -157,6 +157,8 @@ class CivitaiPickerDialog(QDialog):
         self._search_generation = 0
         self._known_tags: list[str] = []
         self._checked_hashes: set[str] = set()
+        self._batch_cancelled = False
+        self._batch_label = ""
 
         self.setWindowTitle(_("CivitAI Browser"))
         self.setMinimumSize(720, 520)
@@ -288,6 +290,7 @@ class CivitaiPickerDialog(QDialog):
 
         # ── result grid ──
         self._grid = QListWidget(self)
+        self._grid.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self._grid.setViewMode(QListWidget.ViewMode.IconMode)
         self._grid.setIconSize(QSize(self._preview_size, self._preview_size))
         self._grid.setGridSize(QSize(self._preview_size + 16, self._preview_size + 44))
@@ -621,8 +624,9 @@ class CivitaiPickerDialog(QDialog):
         return result
 
     def _apply_filter(self):
-        selected = self._selected_model()
-        selected_id = selected[0].id if selected else 0
+        selected_ids = {
+            item.data(Qt.ItemDataRole.UserRole).id for item in self._grid.selectedItems()
+        }
         # appending a page rebuilds the grid - keep the viewport where it was, or
         # loading more results would yank the user back to the top
         scroll = self._grid.verticalScrollBar().value()
@@ -636,7 +640,7 @@ class CivitaiPickerDialog(QDialog):
                 item.setToolTip(self._tooltip(model, version))
                 self._set_tile_icon(item, model, version)
                 self._grid.addItem(item)
-                if model.id == selected_id:
+                if model.id in selected_ids:
                     item.setSelected(True)
         # the grid lays out asynchronously, so the scroll position only sticks once
         # the new items have been arranged
@@ -783,46 +787,64 @@ class CivitaiPickerDialog(QDialog):
 
     def _on_selection_changed(self):
         items = self._grid.selectedItems()
-        if not items:
-            self._selected_label.setText(_("No model selected"))
+        self._version_combo.setEnabled(len(items) == 1)
+        if len(items) == 1:
+            model: CivitaiModel = items[0].data(Qt.ItemDataRole.UserRole)
+            with theme.SignalBlocker(self._version_combo):
+                self._version_combo.clear()
+                for version in model.versions:
+                    size = _size_label(version.size_mb)
+                    label = version.name or str(version.id)
+                    self._version_combo.addItem(f"{label} ({size})" if size else label, version.id)
+                self._version_combo.setCurrentIndex(0)
+        elif not items:
             self._version_combo.clear()
-            self._download_btn.setEnabled(False)
-            return
-        model: CivitaiModel = items[0].data(Qt.ItemDataRole.UserRole)
-        self._version_combo.blockSignals(True)
-        self._version_combo.clear()
-        for version in model.versions:
-            size = _size_label(version.size_mb)
-            label = version.name or str(version.id)
-            self._version_combo.addItem(f"{label} ({size})" if size else label, version.id)
-        self._version_combo.setCurrentIndex(0)
-        self._version_combo.blockSignals(False)
         self._update_selection_label()
 
     def _on_version_changed(self):
         self._update_selection_label()
 
     def _update_selection_label(self):
-        selection = self._selected_model()
-        if selection is None:
+        downloads = self._selected_downloads()
+        if not downloads:
+            self._selected_label.setText(_("No model selected"))
+            self._download_btn.setText(_("Download"))
+            self._download_btn.setEnabled(False)
             return
-        model, version = selection
-        state = self._state_of(model, version)
-        parts = [model.name, version.base_model or "?"]
-        if size := _size_label(version.size_mb):
-            parts.append(size)
-        if state == _STATE_INSTALLED:
-            parts.append(_("already in library"))
-        self._selected_label.setText(" · ".join(parts))
-        self._download_btn.setEnabled(
-            not self._download_running and state != _STATE_INSTALLED and not version.early_access
-        )
-        if version.early_access:
-            self._download_btn.setToolTip(_("Early access - requires a purchase on CivitAI"))
-        elif state == _STATE_INSTALLED:
-            self._download_btn.setToolTip(_("This version is already in your library"))
+        pending = [
+            (m, v)
+            for m, v in downloads
+            if self._state_of(m, v) != _STATE_INSTALLED and not v.early_access
+        ]
+        if len(downloads) == 1:
+            model, version = downloads[0]
+            state = self._state_of(model, version)
+            parts = [model.name, version.base_model or "?"]
+            if size := _size_label(version.size_mb):
+                parts.append(size)
+            if state == _STATE_INSTALLED:
+                parts.append(_("already in library"))
+            self._selected_label.setText(" · ".join(parts))
+            if version.early_access:
+                self._download_btn.setToolTip(_("Early access - requires a purchase on CivitAI"))
+            elif state == _STATE_INSTALLED:
+                self._download_btn.setToolTip(_("This version is already in your library"))
+            else:
+                self._download_btn.setToolTip(_("Download into the local model library"))
+            self._download_btn.setText(_("Download"))
         else:
-            self._download_btn.setToolTip(_("Download into the local model library"))
+            total = sum(v.size_mb for _model, v in pending)
+            summary = f"{len(downloads)} {_('models selected')}"
+            if skipped := len(downloads) - len(pending):
+                summary += f" ({skipped} {_('already in library')})"
+            if size := _size_label(total):
+                summary += f" · {size}"
+            self._selected_label.setText(summary)
+            self._download_btn.setText(f"{_('Download')} ({len(pending)})")
+            self._download_btn.setToolTip(
+                _("Download the selected models one after another into the local library")
+            )
+        self._download_btn.setEnabled(not self._download_running and bool(pending))
 
     def _show_context_menu(self, pos):
         item = self._grid.itemAt(pos)
@@ -847,26 +869,84 @@ class CivitaiPickerDialog(QDialog):
 
     # ── download ──
 
+    def _selected_downloads(self) -> list[tuple[CivitaiModel, CivitaiVersion]]:
+        """Model/version pairs to download for the current selection.
+
+        With a single tile selected the version combo decides; with several, each
+        model contributes its newest version - picking versions per model would need
+        a dialog per model, which defeats the point of selecting a batch."""
+        items = self._grid.selectedItems()
+        if len(items) == 1:
+            selection = self._selected_model()
+            return [selection] if selection else []
+        result = []
+        for item in items:
+            model: CivitaiModel = item.data(Qt.ItemDataRole.UserRole)
+            if model.versions:
+                result.append((model, model.versions[0]))
+        return result
+
     def _download_selected(self):
-        selection = self._selected_model()
-        if selection is None or self._download_running:
+        if self._download_running:
             return
         client = root.connection.client_if_connected
         if client is None:
             self._status.setText(_("Not connected to ComfyUI"))
             return
-        model, version = selection
-        if self._state_of(model, version) == _STATE_INSTALLED or version.early_access:
+        queue = []
+        skipped = 0
+        for model, version in self._selected_downloads():
+            if self._state_of(model, version) == _STATE_INSTALLED or version.early_access:
+                skipped += 1
+                continue
+            queue.append((model, version))
+        if not queue:
+            self._status.setText(_("Nothing to download - everything selected is in your library"))
             return
         self._download_running = True
-        self._download_id = new_download_id()
+        self._batch_cancelled = False
         self._download_btn.setEnabled(False)
         self._progress.setValue(0)
-        self._progress_label.setText(f"{_('Downloading')} {model.name}…")
         self._download_row.setVisible(True)
-        eventloop.run(self._run_download(client, model, version))
+        eventloop.run(self._run_batch(client, queue, skipped))
 
-    async def _run_download(self, client, model: CivitaiModel, version: CivitaiVersion):
+    async def _run_batch(self, client, queue: list, skipped: int):
+        """Downloads run one after another on purpose: Lora Manager has no server-side
+        queue worker (its queue endpoints only record entries in a table, nothing pops
+        them), and parallel transfers would just split the same bandwidth."""
+        done = failed = 0
+        errors: list[str] = []
+        for index, (model, version) in enumerate(queue, start=1):
+            if self._batch_cancelled:
+                break
+            self._batch_label = f"({index}/{len(queue)}) {model.name}"
+            self._progress.setValue(0)
+            self._progress_label.setText(f"{_('Downloading')} {self._batch_label}…")
+            result = await self._run_download(client, model, version)
+            if result.get("success"):
+                done += 1
+                self._after_download(client, model, version)
+            elif not self._batch_cancelled:
+                failed += 1
+                errors.append(f"{model.name}: {result.get('error') or _('unknown error')}")
+        self._download_running = False
+        self._download_row.setVisible(False)
+        self._status.setText(self._batch_summary(done, failed, skipped, errors))
+        self._update_selection_label()
+
+    def _batch_summary(self, done: int, failed: int, skipped: int, errors: list[str]) -> str:
+        parts = [f"{done} {_('downloaded')}"]
+        if failed:
+            parts.append(f"{failed} {_('failed')}")
+        if skipped:
+            parts.append(f"{skipped} {_('skipped')}")
+        if self._batch_cancelled:
+            parts.append(_("cancelled"))
+        summary = ", ".join(parts)
+        return f"{summary} – {errors[0]}" if errors else summary
+
+    async def _run_download(self, client, model: CivitaiModel, version: CivitaiVersion) -> dict:
+        self._download_id = new_download_id()
         download_id = self._download_id
         task = asyncio.ensure_future(
             start_download(
@@ -886,22 +966,16 @@ class CivitaiPickerDialog(QDialog):
                     break  # cancelled - stop polling, the task resolves on its own
                 progress = await fetch_download_progress(client._requests, client.url, download_id)
                 self._show_progress(progress)
-            result = await task
+            return await task
         except Exception as e:
-            result = {"success": False, "error": str(e)}
-        self._download_running = False
-        self._download_row.setVisible(False)
-        if result.get("success"):
-            self._status.setText(f"{_('Downloaded')}: {model.name}")
-            self._after_download(client, model, version)
-        else:
-            error = str(result.get("error") or _("unknown error"))
-            self._status.setText(f"{_('Download failed')}: {error}")
-        self._update_selection_label()
+            return {"success": False, "error": str(e)}
 
     def _show_progress(self, progress: dict):
+        prefix = (
+            f"{_('Downloading')} {self._batch_label}" if self._batch_label else _("Downloading")
+        )
         if not progress:
-            self._progress_label.setText(_("Starting download…"))
+            self._progress_label.setText(f"{prefix}…")
             return
         percent = int(progress.get("progress") or 0)
         self._progress.setValue(percent)
@@ -912,12 +986,13 @@ class CivitaiPickerDialog(QDialog):
         if speed:
             detail = f"{detail} – {speed:.1f} MB/s" if detail else f"{speed:.1f} MB/s"
         message = progress.get("message")
-        self._progress_label.setText(message or f"{_('Downloading')} {detail}")
+        self._progress_label.setText(message or f"{prefix} {detail}".strip())
 
     def _cancel_download(self):
         if not self._download_running:
             return
         client = root.connection.client_if_connected
+        self._batch_cancelled = True  # also stops the remaining items of a batch
         download_id, self._download_id = self._download_id, ""
         self._download_row.setVisible(False)
         self._status.setText(_("Cancelling download…"))
