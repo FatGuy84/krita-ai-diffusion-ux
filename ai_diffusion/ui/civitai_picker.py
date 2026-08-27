@@ -348,7 +348,10 @@ class CivitaiPickerDialog(QDialog):
         settings.save()
 
     def _current_tag(self) -> str:
-        return self._tag_combo.currentText().strip().lower()
+        # editable combo: the placeholder entry shows its label as text, which would
+        # otherwise be sent as a literal tag named "any tag"
+        text = self._tag_combo.currentText().strip().lower()
+        return "" if text == _("Any tag").lower() else text
 
     def _load_tags(self):
         eventloop.run(self._fetch_tags())
@@ -362,7 +365,7 @@ class CivitaiPickerDialog(QDialog):
         with theme.SignalBlocker(self._tag_combo):
             self._tag_combo.clear()
             self._tag_combo.addItem(_("Any tag"), "")
-            for tag in tags:
+            for tag in sorted(tags):
                 self._tag_combo.addItem(tag, tag)
             self._tag_combo.setCurrentText(current)
 
@@ -512,9 +515,14 @@ class CivitaiPickerDialog(QDialog):
                 continue
             if self._commercial_check.isChecked() and model.commercial != "yes":
                 continue
-            if nsfw_mode == _NSFW_SAFE and model.nsfw_level >= 8:
+            # A model's nsfwLevel is the union of the ratings of ALL its images, so
+            # one spicy example sets the R bit on an otherwise tame model - filtering
+            # on it dropped over half of even an nsfw=false result set. Judge the
+            # preview we actually show instead, like the local LoRA browser does.
+            preview_level = version.preview_nsfw_level
+            if nsfw_mode == _NSFW_SAFE and preview_level >= 8:
                 continue
-            if nsfw_mode == _NSFW_HIDE_EXPLICIT and model.nsfw_level >= 16:
+            if nsfw_mode == _NSFW_HIDE_EXPLICIT and preview_level >= 16:
                 continue
             if client_side_arch and arch_for_base_model(version.base_model) != arch:
                 continue

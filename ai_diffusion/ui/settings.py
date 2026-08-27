@@ -750,8 +750,6 @@ class InterfaceSettings(SettingsTab):
             "apply_region_behavior_live",
             ComboBoxSetting(S._apply_region_behavior_live, parent=self),
         )
-        self.add("civitai_api_key", TextSetting(S._civitai_api_key, parent=self))
-        self.add("civitai_nsfw_filter", ComboBoxSetting(S._civitai_nsfw_filter, parent=self))
         self.add("new_seed_after_apply", SwitchSetting(S._new_seed_after_apply, parent=self))
         self.add("save_image_format", ComboBoxSetting(S._save_image_format, parent=self))
         self.add("save_image_metadata", SwitchSetting(S._save_image_metadata, parent=self))
@@ -805,11 +803,31 @@ class InterfaceSettings(SettingsTab):
         self._widgets["save_image_metadata"].enabled = fmt.extension == "png"
 
 
-class PromptEnhanceSettings(SettingsTab):
+def _section(layout: QVBoxLayout, title: str, description: str = ""):
+    label = QLabel(title)
+    label.setStyleSheet("font-weight:bold")
+    layout.addSpacing(8)
+    layout.addWidget(label)
+    if description:
+        hint = QLabel(description)
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"font-style:italic; color: {grey};")
+        layout.addWidget(hint)
+
+
+class IntegrationSettings(SettingsTab):
+    """Everything that talks to a service outside the plugin: the local language
+    model for prompt enhancement, CivitAI, and ComfyUI-Lora-Manager."""
+
     def __init__(self):
-        super().__init__(_("Prompt Enhancement"))
+        super().__init__(_("Integrations"))
 
         S = Settings
+        _section(
+            self._layout,
+            _("Prompt AI"),
+            _("Local Ollama server used to write and refine prompts"),
+        )
         self.add("ollama_enabled", SwitchSetting(S._ollama_enabled, parent=self))
         self.add("ollama_url", TextSetting(S._ollama_url, parent=self))
         self.add("ollama_model", ComboBoxSetting(S._ollama_model, parent=self))
@@ -857,6 +875,29 @@ class PromptEnhanceSettings(SettingsTab):
         self._reload_profiles = QPushButton(_("Reload Profiles"), self)
         self._reload_profiles.clicked.connect(self._do_reload_profiles)
         self._layout.addWidget(self._reload_profiles, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        _section(
+            self._layout,
+            _("CivitAI"),
+            _("Model search and downloads in the CivitAI browser"),
+        )
+        self.add("civitai_host", ComboBoxSetting(S._civitai_host, parent=self))
+        self.add("civitai_api_key", TextSetting(S._civitai_api_key, parent=self))
+        self.add("civitai_nsfw_filter", ComboBoxSetting(S._civitai_nsfw_filter, parent=self))
+
+        _section(
+            self._layout,
+            _("Lora Manager"),
+            _(
+                "ComfyUI-Lora-Manager runs on the ComfyUI server and provides the LoRA,"
+                " checkpoint and recipe browsers as well as model downloads."
+            ),
+        )
+        self.add("civitai_download_root", TextSetting(S._civitai_download_root, parent=self))
+        self.add(
+            "civitai_download_subfolder",
+            TextSetting(S._civitai_download_subfolder, parent=self),
+        )
 
         self._layout.addStretch()
 
@@ -1279,7 +1320,7 @@ class SettingsDialog(QDialog):
         self.styles = StylePresets(server)
         self.diffusion = DiffusionSettings()
         self.interface = InterfaceSettings()
-        self.prompt_ai = PromptEnhanceSettings()
+        self.integrations = IntegrationSettings()
         self.performance = PerformanceSettings()
         self.about = AboutSettings()
 
@@ -1296,7 +1337,7 @@ class SettingsDialog(QDialog):
         create_list_item(_("Styles"), self.styles)
         create_list_item(_("Diffusion"), self.diffusion)
         create_list_item(_("Interface"), self.interface)
-        create_list_item(_("Prompt AI"), self.prompt_ai)
+        create_list_item(_("Integrations"), self.integrations)
         create_list_item(_("Performance"), self.performance)
         create_list_item(_("Plugin"), self.about)
 
@@ -1341,7 +1382,7 @@ class SettingsDialog(QDialog):
         self.styles.read()
         self.diffusion.read()
         self.interface.read()
-        self.prompt_ai.read()
+        self.integrations.read()
         self.performance.read()
         self.about.read()
 

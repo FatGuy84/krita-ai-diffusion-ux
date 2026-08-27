@@ -256,6 +256,17 @@ class Settings(QObject):
         _("NSFW Filter"), 0.0, _("Attempt to filter out images with explicit content")
     )
 
+    civitai_host: str
+    _civitai_host = Setting(
+        _("CivitAI Site"),
+        "civitai.red",
+        _(
+            "Which CivitAI domain the browser talks to. Both serve the same API and"
+            " the same models; civitai.red is the alternative front end."
+        ),
+        items=[("civitai.red", "civitai.red"), ("civitai.com", "civitai.com")],
+    )
+
     civitai_api_key: str
     _civitai_api_key = Setting(
         _("CivitAI API Key"),

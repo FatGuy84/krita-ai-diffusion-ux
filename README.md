@@ -183,8 +183,8 @@ the file, so a downloaded model shows up fully described in the LoRA browser.
   a base-model filter that is pre-set to the architecture of your current
   checkpoint. Pony, Illustrious and NoobAI are separate labels on CivitAI even
   though they are SDXL underneath, so picking "SD XL" includes them.
-* **Tag filter**: a dropdown filled with CivitAI's own tag vocabulary (character,
-  style, clothing, concept, …), most used first, and you can type your own. A tag
+* **Tag filter**: a dropdown filled with CivitAI's own tag vocabulary (the 100 most
+  used, listed alphabetically), and you can type your own. A tag
   the site does not know is silently ignored by its search — the browser checks the
   entered tag against the vocabulary and says so instead of showing you unfiltered
   results that look like a match.
@@ -204,11 +204,13 @@ the file, so a downloaded model shows up fully described in the LoRA browser.
 * **Downloads** show progress, speed and a cancel button. Duplicate downloads are
   refused by Lora Manager, early-access models are marked and cannot be
   downloaded (they need a purchase on CivitAI first).
-* **Content rating**: the filter starts at whatever *Settings → Interface →
+* **Content rating**: the filter starts at whatever *Settings → Integrations →
   CivitAI Content Filter* is set to, and changing it in the browser updates that
   setting, so it stays where you left it.
-* **API key** (optional, *Settings → Interface → CivitAI API Key*, created under
-  Account settings → API Keys on civitai.com): raises the rate limits and gives
+* **Site**: *Settings → Integrations → CivitAI Site* switches between
+  `civitai.red` (default) and `civitai.com`. Same API, same models, same images.
+* **API key** (optional, *Settings → Integrations → CivitAI API Key*, created under
+  Account settings → API Keys): raises the rate limits and gives
   access to content that is hidden from anonymous requests. Note it is stored in
   plain text in the plugin's `settings.json`, like the other connection settings.
 * **Previews** are pulled as CDN thumbnails (`anim=false`), which also means

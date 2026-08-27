@@ -4,11 +4,19 @@ import json
 from dataclasses import dataclass, field
 from urllib.parse import quote
 
+from ..settings import settings
 from ..util import client_logger as log
 from .lora_manager import commercial_use_from_license
 from .network import RequestManager
 
-api_url = "https://civitai.com/api/v1"
+
+def api_url() -> str:
+    """API root of the configured CivitAI front end (civitai.red or civitai.com -
+    same API, same models)."""
+    host = (settings.civitai_host or "civitai.red").strip().rstrip("/")
+    host = host.split("//")[-1]
+    return f"https://{host}/api/v1"
+
 
 # Arch enum name -> the `baseModels` values CivitAI filters on. Verified against the
 # live API - unlisted or misspelled values are accepted but silently match nothing,
@@ -188,7 +196,8 @@ def preview_thumbnail_url(url: str, width: int = 320) -> str:
 
 
 def model_page_url(model_id: int, version_id: int = 0) -> str:
-    url = f"https://civitai.com/models/{model_id}"
+    host = api_url().split("//")[-1].split("/")[0]
+    url = f"https://{host}/models/{model_id}"
     return f"{url}?modelVersionId={version_id}" if version_id else url
 
 
@@ -238,7 +247,7 @@ async def search_models(
     if cursor:
         params.append(("cursor", cursor))
 
-    url = f"{api_url}/models?{_query(params)}"
+    url = f"{api_url()}/models?{_query(params)}"
     data = await requests().get(url, timeout=30.0, bearer=api_key or None)
     if isinstance(data, (bytes, bytearray)):
         data = json.loads(data)
@@ -258,7 +267,7 @@ async def fetch_model_preview(model_id: int, api_key: str = "") -> tuple[str, in
     """
     try:
         data = await requests().get(
-            f"{api_url}/models/{int(model_id)}", timeout=20.0, bearer=api_key or None
+            f"{api_url()}/models/{int(model_id)}", timeout=20.0, bearer=api_key or None
         )
         if isinstance(data, (bytes, bytearray)):
             data = json.loads(data)
@@ -285,7 +294,7 @@ async def fetch_tags(query: str = "", limit: int = 100, api_key: str = "") -> li
         params.append(("query", query))
     try:
         data = await requests().get(
-            f"{api_url}/tags?{_query(params)}", timeout=20.0, bearer=api_key or None
+            f"{api_url()}/tags?{_query(params)}", timeout=20.0, bearer=api_key or None
         )
         if isinstance(data, (bytes, bytearray)):
             data = json.loads(data)
