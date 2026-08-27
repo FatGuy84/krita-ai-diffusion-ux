@@ -1,0 +1,689 @@
+from __future__ import annotations
+
+import asyncio
+
+from PyQt5.QtCore import QRect, QSize, Qt, QTimer, QUrl
+from PyQt5.QtGui import (
+    QColor,
+    QDesktopServices,
+    QGuiApplication,
+    QIcon,
+    QPainter,
+    QPixmap,
+)
+from PyQt5.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QProgressBar,
+    QPushButton,
+    QSlider,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from .. import eventloop
+from ..backend import civitai
+from ..backend.civitai import CivitaiModel, CivitaiVersion
+from ..backend.lora_manager import (
+    arch_for_base_model,
+    cancel_download,
+    clear_lora_cache,
+    fetch_download_progress,
+    load_cached_loras,
+    new_download_id,
+    start_download,
+)
+from ..localization import translate as _
+from ..model.root import root
+from . import theme
+from .lora_picker import (
+    _ARCH_LABELS,
+    _NSFW_ALL,
+    _NSFW_HIDE_EXPLICIT,
+    _NSFW_SAFE,
+    _extract_video_frame,
+    _ffmpeg_path,
+    _visible_range,
+    _with_badges,
+)
+
+_PREVIEW_SIZE_DEFAULT = 128
+_PREVIEW_SIZE_MIN = 64
+_PREVIEW_SIZE_MAX = 384
+_ARCH_ANY = "__any__"
+_PAGE_SIZE = 50
+
+_KIND_LORA = "lora"
+_KIND_CHECKPOINT = "checkpoint"
+
+# state of a search result relative to the local library
+_STATE_NEW = ""
+_STATE_INSTALLED = "installed"
+_STATE_UPDATE = "update"
+
+_STATE_COLORS = {
+    _STATE_INSTALLED: QColor(60, 170, 75),
+    _STATE_UPDATE: QColor(60, 130, 210),
+}
+_STATE_SYMBOLS = {_STATE_INSTALLED: "✓", _STATE_UPDATE: "↑"}
+
+
+def _with_state_marker(pixmap: QPixmap, state: str) -> QPixmap:
+    """Round badge, top-left: green check = this exact version is in the library,
+    blue arrow = another version of the same model is."""
+    if state == _STATE_NEW:
+        return pixmap
+    result = QPixmap(pixmap)
+    painter = QPainter(result)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    b = max(14, result.width() // 6)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(_STATE_COLORS[state])
+    painter.drawEllipse(2, 2, b, b)
+    painter.setPen(QColor(255, 255, 255))
+    font = painter.font()
+    font.setBold(True)
+    font.setPixelSize(max(8, int(b * 0.7)))
+    painter.setFont(font)
+    painter.drawText(QRect(2, 2, b, b), Qt.AlignmentFlag.AlignCenter, _STATE_SYMBOLS[state])
+    painter.end()
+    return result
+
+
+def _size_label(mb: float) -> str:
+    if mb <= 0:
+        return ""
+    return f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb:.0f} MB"
+
+
+class CivitaiPickerDialog(QDialog):
+    """Search civitai.com and download models straight into the local library.
+
+    The plugin only searches; the download itself is handed to ComfyUI-Lora-Manager,
+    which knows the folder layout and writes metadata and previews alongside the file.
+    """
+
+    def __init__(self, current_arch: str = "", parent: QWidget | None = None):
+        super().__init__(parent)
+        self._models: list[CivitaiModel] = []
+        self._cursor = ""
+        self._loading = False
+        self._preview_size = _PREVIEW_SIZE_DEFAULT
+        self._preview_cache: dict[int, QPixmap] = {}
+        self._pending_previews: set[int] = set()
+        self._installed_hashes: set[str] = set()
+        self._installed_models: set[int] = set()
+        self._download_id = ""
+        self._download_running = False
+        self._search_generation = 0
+
+        self.setWindowTitle(_("CivitAI Browser"))
+        self.setMinimumSize(720, 520)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.Window)
+
+        # ── search row ──
+        self._search = QLineEdit(self)
+        self._search.setPlaceholderText(_("Search CivitAI…"))
+        self._search.setClearButtonEnabled(True)
+        self._search.returnPressed.connect(self._start_search)
+
+        search_btn = QPushButton(_("Search"), self)
+        search_btn.clicked.connect(self._start_search)
+
+        self._kind_combo = QComboBox(self)
+        self._kind_combo.addItem(_("LoRA"), _KIND_LORA)
+        self._kind_combo.addItem(_("Checkpoint"), _KIND_CHECKPOINT)
+        self._kind_combo.currentIndexChanged.connect(self._start_search)
+
+        self._sort_combo = QComboBox(self)
+        for option in civitai.sort_options:
+            self._sort_combo.addItem(_(option), option)
+        self._sort_combo.currentIndexChanged.connect(self._start_search)
+
+        self._period_combo = QComboBox(self)
+        for option in civitai.period_options:
+            self._period_combo.addItem(_(option), option)
+        self._period_combo.currentIndexChanged.connect(self._start_search)
+
+        row1 = QHBoxLayout()
+        row1.addWidget(self._search, 1)
+        row1.addWidget(search_btn)
+        row1.addWidget(self._kind_combo)
+        row1.addWidget(self._sort_combo)
+        row1.addWidget(self._period_combo)
+
+        # ── filter row ──
+        self._arch_combo = QComboBox(self)
+        self._arch_combo.addItem(_("Any base model"), _ARCH_ANY)
+        for arch in sorted(civitai.civitai_base_models, key=lambda a: _ARCH_LABELS.get(a, a)):
+            self._arch_combo.addItem(_ARCH_LABELS.get(arch, arch), arch)
+        index = self._arch_combo.findData(current_arch)
+        self._arch_combo.setCurrentIndex(index if index >= 0 else 0)
+        self._arch_combo.currentIndexChanged.connect(self._start_search)
+
+        self._nsfw_combo = QComboBox(self)
+        self._nsfw_combo.addItem(_("All ratings"), _NSFW_ALL)
+        self._nsfw_combo.addItem(_("Safe only"), _NSFW_SAFE)
+        self._nsfw_combo.addItem(_("Hide explicit"), _NSFW_HIDE_EXPLICIT)
+        self._nsfw_combo.setToolTip(
+            _("Filter by the CivitAI content rating.\nWithout an API key CivitAI hides")
+            + " "
+            + _("preview images of mature models, so those tiles stay empty.")
+        )
+        self._nsfw_combo.currentIndexChanged.connect(self._start_search)
+
+        self._commercial_check = QCheckBox(_("Sellable images only"), self)
+        self._commercial_check.setToolTip(
+            _(
+                "Only show models whose CivitAI license allows selling generated images"
+                " (allowCommercialUse contains 'Image').\nFilters the results already"
+                " loaded - CivitAI cannot filter this server-side."
+            )
+        )
+        self._commercial_check.stateChanged.connect(self._apply_filter)
+
+        size_label = QLabel(_("Size:"), self)
+        self._size_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self._size_slider.setMinimum(_PREVIEW_SIZE_MIN)
+        self._size_slider.setMaximum(_PREVIEW_SIZE_MAX)
+        self._size_slider.setValue(self._preview_size)
+        self._size_slider.setFixedWidth(90)
+        self._size_slider.valueChanged.connect(self._on_preview_size_changed)
+
+        row2 = QHBoxLayout()
+        row2.addWidget(self._arch_combo)
+        row2.addWidget(self._nsfw_combo)
+        row2.addWidget(self._commercial_check)
+        row2.addStretch(1)
+        row2.addWidget(size_label)
+        row2.addWidget(self._size_slider)
+
+        # ── result grid ──
+        self._grid = QListWidget(self)
+        self._grid.setViewMode(QListWidget.ViewMode.IconMode)
+        self._grid.setIconSize(QSize(self._preview_size, self._preview_size))
+        self._grid.setGridSize(QSize(self._preview_size + 16, self._preview_size + 44))
+        self._grid.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self._grid.setMovement(QListWidget.Movement.Static)
+        self._grid.setWordWrap(True)
+        self._grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._grid.customContextMenuRequested.connect(self._show_context_menu)
+        self._grid.itemSelectionChanged.connect(self._on_selection_changed)
+        self._grid.itemDoubleClicked.connect(lambda _item: self._download_selected())
+        self._grid.verticalScrollBar().valueChanged.connect(self._on_scrolled)
+
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(120)
+        self._preview_timer.timeout.connect(self._load_visible_previews)
+
+        # ── download row (hidden while idle) ──
+        self._progress = QProgressBar(self)
+        self._progress.setRange(0, 100)
+        self._progress_label = QLabel("", self)
+        self._cancel_btn = QToolButton(self)
+        self._cancel_btn.setIcon(theme.icon("cancel"))
+        self._cancel_btn.setToolTip(_("Cancel the running download"))
+        self._cancel_btn.setAutoRaise(True)
+        self._cancel_btn.clicked.connect(self._cancel_download)
+        self._download_row = QWidget(self)
+        download_layout = QHBoxLayout()
+        download_layout.setContentsMargins(0, 0, 0, 0)
+        download_layout.addWidget(self._progress_label, 1)
+        download_layout.addWidget(self._progress, 1)
+        download_layout.addWidget(self._cancel_btn)
+        self._download_row.setLayout(download_layout)
+        self._download_row.setVisible(False)
+
+        # ── bottom bar ──
+        self._selected_label = QLabel(_("No model selected"), self)
+        self._selected_label.setWordWrap(True)
+        self._version_combo = QComboBox(self)
+        self._version_combo.setMinimumWidth(140)
+        self._version_combo.setToolTip(_("Model version to download"))
+        self._version_combo.currentIndexChanged.connect(self._on_version_changed)
+        self._download_btn = QPushButton(theme.icon("web-connection"), _("Download"), self)
+        self._download_btn.setEnabled(False)
+        self._download_btn.clicked.connect(self._download_selected)
+        close_btn = QPushButton(_("Close"), self)
+        close_btn.clicked.connect(self.close)
+
+        bottom = QHBoxLayout()
+        bottom.addWidget(self._selected_label, 1)
+        bottom.addWidget(self._version_combo)
+        bottom.addWidget(self._download_btn)
+        bottom.addWidget(close_btn)
+
+        self._status = QLabel("", self)
+        self._status.setStyleSheet(f"color: {theme.grey}; font-style: italic;")
+
+        layout = QVBoxLayout()
+        layout.addLayout(row1)
+        layout.addLayout(row2)
+        layout.addWidget(self._grid, 1)
+        layout.addWidget(self._status)
+        layout.addWidget(self._download_row)
+        layout.addLayout(bottom)
+        self.setLayout(layout)
+
+        self._refresh_installed()
+        self._start_search()
+
+    # ── local library state ──
+
+    def _refresh_installed(self):
+        """Hashes and model ids of what is already in the library, so results can be
+        marked as installed. Uses the LoRA browser's cache (checkpoints are not
+        cached, so those stay unmarked) - a miss only means a tile is not marked,
+        and Lora Manager still refuses a duplicate download."""
+        self._installed_hashes = set()
+        self._installed_models = set()
+        client = root.connection.client_if_connected
+        if client is None:
+            return
+        for lora in load_cached_loras(client.url) or []:
+            if lora.sha256:
+                self._installed_hashes.add(lora.sha256.upper())
+            if lora.civitai_model_id:
+                self._installed_models.add(int(lora.civitai_model_id))
+
+    def _state_of(self, model: CivitaiModel, version: CivitaiVersion) -> str:
+        file = version.primary_file
+        if file and file.sha256 and file.sha256.upper() in self._installed_hashes:
+            return _STATE_INSTALLED
+        if model.id in self._installed_models:
+            return _STATE_UPDATE
+        return _STATE_NEW
+
+    # ── search ──
+
+    def _current_types(self) -> list[str]:
+        if self._kind_combo.currentData() == _KIND_CHECKPOINT:
+            return civitai.checkpoint_types
+        return civitai.lora_types
+
+    def _current_base_models(self) -> list[str]:
+        arch = self._arch_combo.currentData()
+        if arch == _ARCH_ANY:
+            return []
+        return civitai.civitai_base_models.get(arch, [])
+
+    def _start_search(self):
+        # abandon a request that is still in flight - its results belong to the
+        # previous query and must not be appended to this one
+        self._search_generation += 1
+        self._loading = False
+        self._models = []
+        self._cursor = ""
+        self._grid.clear()
+        self._preview_cache.clear()
+        self._pending_previews.clear()
+        self._fetch_page()
+
+    def _fetch_page(self):
+        if self._loading:
+            return
+        self._loading = True
+        self._status.setText(_("Searching CivitAI…"))
+        eventloop.run(self._fetch())
+
+    async def _fetch(self):
+        generation = self._search_generation
+        nsfw_mode = self._nsfw_combo.currentData()
+        try:
+            models, cursor = await civitai.search_models(
+                query=self._search.text().strip(),
+                types=self._current_types(),
+                base_models=self._current_base_models(),
+                sort=self._sort_combo.currentData(),
+                period=self._period_combo.currentData(),
+                nsfw=False if nsfw_mode == _NSFW_SAFE else None,
+                limit=_PAGE_SIZE,
+                cursor=self._cursor,
+            )
+        except Exception as e:
+            if generation == self._search_generation:
+                self._loading = False
+                self._status.setText(_("CivitAI search failed") + f": {e}")
+            return
+        if generation != self._search_generation:
+            return  # a newer search replaced this one
+        self._loading = False
+        self._cursor = cursor
+        self._models.extend(models)
+        self._apply_filter()
+
+    def _on_scrolled(self, value: int):
+        self._schedule_visible_previews()
+        scroll = self._grid.verticalScrollBar()
+        near_bottom = value >= scroll.maximum() - scroll.pageStep() // 2
+        if near_bottom and self._cursor and not self._loading:
+            self._fetch_page()
+
+    # ── filtering / grid ──
+
+    def _visible_models(self) -> list[tuple[CivitaiModel, CivitaiVersion]]:
+        nsfw_mode = self._nsfw_combo.currentData()
+        arch = self._arch_combo.currentData()
+        # only needed where CivitAI has no usable baseModels label (see civitai.py)
+        client_side_arch = arch != _ARCH_ANY and not civitai.civitai_base_models.get(arch)
+        result = []
+        for model in self._models:
+            version = model.versions[0] if model.versions else None
+            if version is None:
+                continue
+            if self._commercial_check.isChecked() and model.commercial != "yes":
+                continue
+            if nsfw_mode == _NSFW_SAFE and model.nsfw_level >= 8:
+                continue
+            if nsfw_mode == _NSFW_HIDE_EXPLICIT and model.nsfw_level >= 16:
+                continue
+            if client_side_arch and arch_for_base_model(version.base_model) != arch:
+                continue
+            result.append((model, version))
+        return result
+
+    def _apply_filter(self):
+        selected = self._selected_model()
+        selected_id = selected[0].id if selected else 0
+        # appending a page rebuilds the grid - keep the viewport where it was, or
+        # loading more results would yank the user back to the top
+        scroll = self._grid.verticalScrollBar().value()
+        # rebuilding re-emits selection changes, which would reset the version combo
+        with theme.SignalBlocker(self._grid):
+            self._grid.clear()
+            for model, version in self._visible_models():
+                item = QListWidgetItem(model.name)
+                item.setData(Qt.ItemDataRole.UserRole, model)
+                item.setSizeHint(self._grid.gridSize())
+                item.setToolTip(self._tooltip(model, version))
+                self._set_tile_icon(item, model, version)
+                self._grid.addItem(item)
+                if model.id == selected_id:
+                    item.setSelected(True)
+        # the grid lays out asynchronously, so the scroll position only sticks once
+        # the new items have been arranged
+        QTimer.singleShot(0, lambda: self._grid.verticalScrollBar().setValue(scroll))
+        total = len(self._models)
+        shown = self._grid.count()
+        more = _("scroll for more") if self._cursor else _("end of results")
+        self._status.setText(f"{shown} / {total} {_('results')} – {more}")
+        self._schedule_visible_previews()
+
+    def _tooltip(self, model: CivitaiModel, version: CivitaiVersion) -> str:
+        lines = [model.name]
+        if model.creator:
+            lines.append(f"{_('By')}: {model.creator}")
+        lines.append(f"{_('Type')}: {model.type} · {version.base_model or '?'}")
+        if size := _size_label(version.size_mb):
+            lines.append(f"{_('Version')}: {version.name or '?'} · {size}")
+        lines.append(f"{_('Downloads')}: {model.downloads}")
+        verdict = {"yes": _("images may be sold"), "no": _("images may not be sold")}
+        lines.append(
+            f"{_('License')}: {model.license_summary}"
+            f" ({verdict.get(model.commercial, _('unstated'))})"
+        )
+        if version.trained_words:
+            lines.append(f"{_('Triggers')}: {' | '.join(version.trained_words[:4])}")
+        if model.poi:
+            lines.append(_("Depicts a real person"))
+        if version.early_access:
+            lines.append(_("Early access - requires a purchase on CivitAI"))
+        state = self._state_of(model, version)
+        if state == _STATE_INSTALLED:
+            lines.append(_("Already in your library"))
+        elif state == _STATE_UPDATE:
+            lines.append(_("Another version of this model is in your library"))
+        return "\n".join(lines)
+
+    def _tile_base(self, version: CivitaiVersion) -> QPixmap:
+        size = self._preview_size
+        if version.id in self._preview_cache:
+            return self._preview_cache[version.id].scaled(
+                size,
+                size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        if version.preview_url and civitai.is_video_url(version.preview_url):
+            return theme.icon("play").pixmap(size, size)
+        blank = QPixmap(size, size)
+        blank.fill(Qt.GlobalColor.transparent)
+        return blank
+
+    def _set_tile_icon(self, item: QListWidgetItem, model: CivitaiModel, version: CivitaiVersion):
+        pixmap = _with_badges(self._tile_base(version), False, model.commercial, version.base_model)
+        item.setIcon(QIcon(_with_state_marker(pixmap, self._state_of(model, version))))
+
+    def _on_preview_size_changed(self, value: int):
+        self._preview_size = value
+        self._grid.setIconSize(QSize(value, value))
+        self._grid.setGridSize(QSize(value + 16, value + 44))
+        for i in range(self._grid.count()):
+            item = self._grid.item(i)
+            model: CivitaiModel = item.data(Qt.ItemDataRole.UserRole)
+            item.setSizeHint(self._grid.gridSize())
+            if model.versions:
+                self._set_tile_icon(item, model, model.versions[0])
+        self._schedule_visible_previews()
+
+    # ── lazy previews ──
+
+    def _schedule_visible_previews(self):
+        self._preview_timer.start()
+
+    def _load_visible_previews(self):
+        viewport = self._grid.viewport().rect()
+        for i in _visible_range(self._grid):
+            item = self._grid.item(i)
+            if item is None or not self._grid.visualItemRect(item).intersects(viewport):
+                continue
+            model: CivitaiModel = item.data(Qt.ItemDataRole.UserRole)
+            if not model.versions:
+                continue
+            version = model.versions[0]
+            if not version.preview_url or version.id in self._preview_cache:
+                continue
+            if version.id in self._pending_previews:
+                continue
+            if civitai.is_video_url(version.preview_url) and _ffmpeg_path is None:
+                continue  # no decoder available - placeholder stays
+            self._pending_previews.add(version.id)
+            eventloop.run(self._load_preview(model, version, item))
+
+    async def _load_preview(self, model: CivitaiModel, version: CivitaiVersion, item):
+        is_video = civitai.is_video_url(version.preview_url)
+        url = version.preview_url
+        if not is_video:
+            url = civitai.preview_thumbnail_url(url, max(_PREVIEW_SIZE_MAX, 320))
+        data = await civitai.fetch_image(url)
+        if data and is_video:
+            loop = asyncio.get_running_loop()
+            data = await loop.run_in_executor(None, _extract_video_frame, data)
+        if not data:
+            return
+        pixmap = QPixmap()
+        pixmap.loadFromData(data)
+        if pixmap.isNull():
+            return
+        self._preview_cache[version.id] = pixmap
+        try:
+            self._set_tile_icon(item, model, version)
+        except RuntimeError:
+            pass  # item removed while the image was loading
+
+    # ── selection ──
+
+    def _selected_model(self) -> tuple[CivitaiModel, CivitaiVersion] | None:
+        items = self._grid.selectedItems()
+        if not items:
+            return None
+        model: CivitaiModel = items[0].data(Qt.ItemDataRole.UserRole)
+        if not model.versions:
+            return None
+        index = self._version_combo.currentIndex()
+        versions = model.versions
+        version = versions[index] if 0 <= index < len(versions) else versions[0]
+        return model, version
+
+    def _on_selection_changed(self):
+        items = self._grid.selectedItems()
+        if not items:
+            self._selected_label.setText(_("No model selected"))
+            self._version_combo.clear()
+            self._download_btn.setEnabled(False)
+            return
+        model: CivitaiModel = items[0].data(Qt.ItemDataRole.UserRole)
+        self._version_combo.blockSignals(True)
+        self._version_combo.clear()
+        for version in model.versions:
+            size = _size_label(version.size_mb)
+            label = version.name or str(version.id)
+            self._version_combo.addItem(f"{label} ({size})" if size else label, version.id)
+        self._version_combo.setCurrentIndex(0)
+        self._version_combo.blockSignals(False)
+        self._update_selection_label()
+
+    def _on_version_changed(self):
+        self._update_selection_label()
+
+    def _update_selection_label(self):
+        selection = self._selected_model()
+        if selection is None:
+            return
+        model, version = selection
+        state = self._state_of(model, version)
+        parts = [model.name, version.base_model or "?"]
+        if size := _size_label(version.size_mb):
+            parts.append(size)
+        if state == _STATE_INSTALLED:
+            parts.append(_("already in library"))
+        self._selected_label.setText(" · ".join(parts))
+        self._download_btn.setEnabled(
+            not self._download_running and state != _STATE_INSTALLED and not version.early_access
+        )
+        if version.early_access:
+            self._download_btn.setToolTip(_("Early access - requires a purchase on CivitAI"))
+        elif state == _STATE_INSTALLED:
+            self._download_btn.setToolTip(_("This version is already in your library"))
+        else:
+            self._download_btn.setToolTip(_("Download into the local model library"))
+
+    def _show_context_menu(self, pos):
+        item = self._grid.itemAt(pos)
+        if item is None:
+            return
+        model: CivitaiModel = item.data(Qt.ItemDataRole.UserRole)
+        version = model.versions[0] if model.versions else None
+        menu = QMenu(self)
+        menu.addAction(
+            _("Open on CivitAI"),
+            lambda: QDesktopServices.openUrl(
+                QUrl(civitai.model_page_url(model.id, version.id if version else 0))
+            ),
+        )
+        if version and version.trained_words:
+            triggers = ", ".join(version.trained_words)
+            menu.addAction(
+                _("Copy trigger words"),
+                lambda: QGuiApplication.clipboard().setText(triggers),
+            )
+        menu.exec(self._grid.mapToGlobal(pos))
+
+    # ── download ──
+
+    def _download_selected(self):
+        selection = self._selected_model()
+        if selection is None or self._download_running:
+            return
+        client = root.connection.client_if_connected
+        if client is None:
+            self._status.setText(_("Not connected to ComfyUI"))
+            return
+        model, version = selection
+        if self._state_of(model, version) == _STATE_INSTALLED or version.early_access:
+            return
+        self._download_running = True
+        self._download_id = new_download_id()
+        self._download_btn.setEnabled(False)
+        self._progress.setValue(0)
+        self._progress_label.setText(f"{_('Downloading')} {model.name}…")
+        self._download_row.setVisible(True)
+        eventloop.run(self._run_download(client, model, version))
+
+    async def _run_download(self, client, model: CivitaiModel, version: CivitaiVersion):
+        download_id = self._download_id
+        task = asyncio.ensure_future(
+            start_download(
+                client._requests, client.url, model.id, version.id, download_id=download_id
+            )
+        )
+        try:
+            while not task.done():
+                await asyncio.sleep(1.0)
+                if download_id != self._download_id:
+                    break  # cancelled - stop polling, the task resolves on its own
+                progress = await fetch_download_progress(client._requests, client.url, download_id)
+                self._show_progress(progress)
+            result = await task
+        except Exception as e:
+            result = {"success": False, "error": str(e)}
+        self._download_running = False
+        self._download_row.setVisible(False)
+        if result.get("success"):
+            self._status.setText(f"{_('Downloaded')}: {model.name}")
+            self._after_download(client, model, version)
+        else:
+            error = str(result.get("error") or _("unknown error"))
+            self._status.setText(f"{_('Download failed')}: {error}")
+        self._update_selection_label()
+
+    def _show_progress(self, progress: dict):
+        if not progress:
+            self._progress_label.setText(_("Starting download…"))
+            return
+        percent = int(progress.get("progress") or 0)
+        self._progress.setValue(percent)
+        speed = float(progress.get("bytes_per_second") or 0.0) / (1024 * 1024)
+        total = float(progress.get("total_bytes") or 0.0) / (1024 * 1024)
+        done = float(progress.get("bytes_downloaded") or 0.0) / (1024 * 1024)
+        detail = f"{done:.0f} / {total:.0f} MB" if total else ""
+        if speed:
+            detail = f"{detail} – {speed:.1f} MB/s" if detail else f"{speed:.1f} MB/s"
+        message = progress.get("message")
+        self._progress_label.setText(message or f"{_('Downloading')} {detail}")
+
+    def _cancel_download(self):
+        if not self._download_running:
+            return
+        client = root.connection.client_if_connected
+        download_id, self._download_id = self._download_id, ""
+        self._download_row.setVisible(False)
+        self._status.setText(_("Cancelling download…"))
+        if client is not None and download_id:
+            eventloop.run(cancel_download(client._requests, client.url, download_id))
+
+    def _after_download(self, client, model: CivitaiModel, version: CivitaiVersion):
+        # the new file exists on the server but neither ComfyUI nor the LoRA browser
+        # know about it yet: drop the cached list and trigger a model refresh
+        clear_lora_cache(client.url)
+        root.connection.refresh()
+        # mark it installed right away - the cache we would read that from was just
+        # dropped, and rebuilding it costs a full server round trip
+        file = version.primary_file
+        if file and file.sha256:
+            self._installed_hashes.add(file.sha256.upper())
+        self._installed_models.add(model.id)
+        self._apply_filter()
+
+    def closeEvent(self, e):
+        self._preview_timer.stop()
+        super().closeEvent(e)

@@ -170,6 +170,35 @@ It also works the other way round: right-click a result in the history →
 LoRA stack straight to Lora Manager as a new recipe, so a generation you
 like becomes reusable without retyping anything.
 
+### CivitAI Browser
+
+A **CivitAI** button next to the LoRA and Recipe buttons opens a search over
+civitai.com without leaving Krita, and downloads straight into your local
+library. The plugin only searches — the download itself is handed to
+[ComfyUI-Lora-Manager](https://github.com/willmiao/ComfyUI-Lora-Manager), which
+already knows your folder layout and writes metadata and preview images next to
+the file, so a downloaded model shows up fully described in the LoRA browser.
+
+* **Filters**: search text, LoRA vs Checkpoint, sort order and time period, plus
+  a base-model filter that is pre-set to the architecture of your current
+  checkpoint. Pony, Illustrious and NoobAI are separate labels on CivitAI even
+  though they are SDXL underneath, so picking "SD XL" includes them.
+* **Already in your library** is marked on the tile: a green check means this
+  exact version is installed (matched by file hash), a blue arrow means you have
+  a different version of the same model.
+* **Selling images**: the `$` badge is green when the model's CivitAI license
+  permits selling generated images and red when it does not. Only the `Image`
+  license grants that — `Sell` covers reselling the model itself, and
+  `Rent`/`RentCivit` only allow running it on a generation service. The
+  **"Sellable images only"** checkbox filters the results down to the green ones,
+  and the tooltip always shows the raw license values.
+* **Downloads** show progress, speed and a cancel button. Duplicate downloads are
+  refused by Lora Manager, early-access models are marked and cannot be
+  downloaded (they need a purchase on CivitAI first).
+* Content-rating filter, video previews and the preview size slider work the same
+  as in the LoRA browser. Note that CivitAI hides preview images of mature models
+  from anonymous API access, so those tiles stay empty.
+
 ### Style Picker
 
 If you have more than a couple dozen style presets, the stock dropdown

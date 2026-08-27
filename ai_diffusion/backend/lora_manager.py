@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -439,9 +440,25 @@ async def set_favorite(
         return False
 
 
+def commercial_use_from_license(allow: list[str] | str | None) -> str:
+    """Map CivitAI's allowCommercialUse to "yes"/"no"/"" (unstated) for the only
+    question that matters here: may generated images be sold?
+
+    CivitAI values are Image / Rent / RentCivit / Sell. Only "Image" grants that
+    right. "Sell" is about reselling the model itself, "RentCivit"/"Rent" only allow
+    running it on a generation service - none of those permit selling output."""
+    if allow is None:
+        return ""
+    if isinstance(allow, str):
+        allow = [allow]
+    if not allow:
+        return "no"  # explicitly empty list = no commercial use at all
+    return "yes" if "Image" in allow else "no"
+
+
 async def fetch_commercial_use(requests: RequestManager, base_url: str, file_path: str) -> str:
     """Return "yes"/"no"/"" (unknown) for whether the model's CivitAI license allows
-    commercial use of generated images. Reads per-model metadata (not in the list)."""
+    selling generated images. Reads per-model metadata (not in the list)."""
     if not file_path:
         return ""
     base = base_url.rstrip("/")
@@ -452,18 +469,7 @@ async def fetch_commercial_use(requests: RequestManager, base_url: str, file_pat
         if isinstance(data, (bytes, bytearray)):
             data = json.loads(data)
         model = ((data or {}).get("metadata") or {}).get("model") or {}
-        allow = model.get("allowCommercialUse")
-        if allow is None:
-            return ""
-        if isinstance(allow, str):
-            allow = [allow]
-        # CivitAI values: Image / Rent / RentCivit / Sell. Only "Image" grants the
-        # right to sell generated images, which is the thing that matters here.
-        # "Sell" is about reselling the model itself, "RentCivit"/"Rent" only allow
-        # running it on a generation service - none of those permit selling output.
-        if "Image" in allow:
-            return "yes"
-        return "no"  # known, but selling images not permitted
+        return commercial_use_from_license(model.get("allowCommercialUse"))
     except Exception as e:
         log.warning(f"Could not fetch commercial-use info for '{file_path}': {e}")
         return ""
@@ -530,3 +536,93 @@ async def save_recipe(
     except Exception as e:
         log.warning(f"Could not save recipe: {e}")
         return f"Could not reach Lora Manager: {e}"
+
+
+# ── downloading models through Lora Manager ─────────────────────────────────
+# Lora Manager does the actual fetching from CivitAI (it has the API key, knows the
+# folder layout and writes metadata + preview next to the file), so the plugin only
+# schedules a download and watches its progress.
+
+
+def new_download_id() -> str:
+    """Lora Manager only returns its own download id when the transfer has finished,
+    which is far too late to show progress. It accepts one we generate instead."""
+    return uuid.uuid4().hex
+
+
+async def start_download(
+    requests: RequestManager,
+    base_url: str,
+    model_id: int,
+    version_id: int = 0,
+    download_id: str = "",
+    model_root: str = "",
+    relative_path: str = "",
+) -> dict:
+    """Download a model from CivitAI into the library. Resolves only once the
+    transfer is done (or failed), so poll fetch_download_progress() alongside it.
+
+    Returns the Lora Manager result dict; on failure it carries an `error` message,
+    e.g. "Model version already exists in lora library" for a model already present.
+    """
+    base = base_url.rstrip("/")
+    payload: dict = {
+        "model_id": int(model_id),
+        "download_id": download_id or new_download_id(),
+        "use_default_paths": not model_root,
+    }
+    if version_id:
+        payload["model_version_id"] = int(version_id)
+    if model_root:
+        payload["model_root"] = model_root
+        payload["relative_path"] = relative_path
+    try:
+        # no timeout: the request stays open for the whole (potentially long) transfer
+        result = await requests.post(f"{base}/api/lm/download-model", payload)
+        if isinstance(result, (bytes, bytearray)):
+            result = json.loads(result)
+        if isinstance(result, dict):
+            return result
+        return {"success": False, "error": f"Unexpected response: {result}"}
+    except Exception as e:
+        log.warning(f"Model download failed: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def fetch_download_progress(
+    requests: RequestManager, base_url: str, download_id: str
+) -> dict:
+    """Progress of a running download: percent, bytes and speed. Empty dict while
+    the download has not reported anything yet (the endpoint 404s until then)."""
+    base = base_url.rstrip("/")
+    try:
+        data = await requests.get(
+            f"{base}/api/lm/download-progress/{quote(download_id)}", timeout=8.0
+        )
+        if isinstance(data, (bytes, bytearray)):
+            data = json.loads(data)
+        return data if isinstance(data, dict) and data.get("success") else {}
+    except Exception:
+        return {}  # 404 until the first progress event - not worth logging
+
+
+async def cancel_download(requests: RequestManager, base_url: str, download_id: str) -> bool:
+    base = base_url.rstrip("/")
+    try:
+        result = await requests.get(
+            f"{base}/api/lm/cancel-download-get?download_id={quote(download_id)}", timeout=10.0
+        )
+        if isinstance(result, (bytes, bytearray)):
+            result = json.loads(result)
+        return isinstance(result, dict) and bool(result.get("success"))
+    except Exception as e:
+        log.warning(f"Could not cancel download {download_id}: {e}")
+        return False
+
+
+def clear_lora_cache(base_url: str):
+    """Drop the cached LoRA list, so the next browser open reflects new downloads."""
+    try:
+        _cache_path(base_url).unlink(missing_ok=True)
+    except Exception as e:
+        log.warning(f"Could not clear LoRA cache: {e}")
