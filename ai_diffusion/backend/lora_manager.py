@@ -655,3 +655,35 @@ async def fetch_folders(requests: RequestManager, base_url: str, kind: str = "lo
     except Exception as e:
         log.warning(f"Could not fetch {kind} folders: {e}")
     return []
+
+
+async def fetch_installed_hashes(
+    requests: RequestManager, base_url: str, hashes: list[str], kind: str = "loras"
+) -> set[str]:
+    """Which of the given sha256 hashes are present in the local library, upper case.
+
+    Lora Manager's list endpoint takes a `hashes` filter, so this is one request per
+    batch instead of pulling the whole library - and unlike the browser's cached list
+    it is authoritative even when nothing has been cached yet.
+    """
+    found: set[str] = set()
+    base = base_url.rstrip("/")
+    unique = [h for h in {h.upper() for h in hashes if h}]
+    for start in range(0, len(unique), 100):  # keep the query string manageable
+        batch = unique[start : start + 100]
+        try:
+            query = quote(json.dumps(batch))
+            data = await requests.get(
+                f"{base}/api/lm/{kind}/list?page_size=200&hashes={query}", timeout=15.0
+            )
+            if isinstance(data, (bytes, bytearray)):
+                data = json.loads(data)
+            if not isinstance(data, dict):
+                continue
+            for item in data.get("items") or []:
+                if sha := item.get("sha256"):
+                    found.add(str(sha).upper())
+        except Exception as e:
+            log.warning(f"Could not check installed hashes: {e}")
+            break
+    return found

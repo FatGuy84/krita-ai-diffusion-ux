@@ -192,9 +192,11 @@ the file, so a downloaded model shows up fully described in the LoRA browser.
   Lora Manager) and a subfolder — either an existing one from your library or a
   new path you type, which Lora Manager creates. Both are remembered, and leaving
   them empty keeps Lora Manager's own default layout.
-* **Already in your library** is marked on the tile: a green check means this
-  exact version is installed (matched by file hash), a blue arrow means you have
-  a different version of the same model.
+* **Already in your library** is unmistakable on the tile: the preview is dimmed
+  and gets a coloured banner — green *installed* for this exact version (matched by
+  file hash against Lora Manager), blue *update* when you have a different version
+  of the same model. The **In library / Not in library** dropdown filters on it, so
+  a search can be narrowed to models you do not have yet.
 * **Selling images**: the `$` badge is green when the model's CivitAI license
   permits selling generated images and red when it does not. Only the `Image`
   license grants that — `Sell` covers reselling the model itself, and

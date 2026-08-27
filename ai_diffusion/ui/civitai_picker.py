@@ -38,6 +38,7 @@ from ..backend.lora_manager import (
     clear_lora_cache,
     fetch_download_progress,
     fetch_folders,
+    fetch_installed_hashes,
     fetch_model_roots,
     load_cached_loras,
     new_download_id,
@@ -75,26 +76,43 @@ _STATE_COLORS = {
     _STATE_UPDATE: QColor(60, 130, 210),
 }
 _STATE_SYMBOLS = {_STATE_INSTALLED: "✓", _STATE_UPDATE: "↑"}
+_STATE_LABELS = {_STATE_INSTALLED: _("installed"), _STATE_UPDATE: _("update")}
+
+_SHOW_ALL = "all"
+_SHOW_NEW = "new"
+_SHOW_INSTALLED = "installed"
 
 
 def _with_state_marker(pixmap: QPixmap, state: str) -> QPixmap:
-    """Round badge, top-left: green check = this exact version is in the library,
-    blue arrow = another version of the same model is."""
+    """Banner across the top of the tile: green "installed" for this exact version,
+    blue "update" when another version of the same model is in the library.
+
+    A small corner badge was too easy to miss against a busy preview image, so the
+    whole tile is dimmed and labelled instead - the point is to see at a glance
+    which results are worth looking at."""
     if state == _STATE_NEW:
         return pixmap
     result = QPixmap(pixmap)
+    w, h = result.width(), result.height()
     painter = QPainter(result)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    b = max(14, result.width() // 6)
+
+    painter.fillRect(0, 0, w, h, QColor(0, 0, 0, 90))  # dim the preview
+
+    bar = max(14, h // 6)
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(_STATE_COLORS[state])
-    painter.drawEllipse(2, 2, b, b)
-    painter.setPen(QColor(255, 255, 255))
+    painter.drawRect(0, 0, w, bar)
+
     font = painter.font()
     font.setBold(True)
-    font.setPixelSize(max(8, int(b * 0.7)))
+    font.setPixelSize(max(8, int(bar * 0.62)))
     painter.setFont(font)
-    painter.drawText(QRect(2, 2, b, b), Qt.AlignmentFlag.AlignCenter, _STATE_SYMBOLS[state])
+    painter.setPen(QColor(255, 255, 255))
+    label = f"{_STATE_SYMBOLS[state]} {_STATE_LABELS[state]}"
+    metrics = painter.fontMetrics()
+    elided = metrics.elidedText(label, Qt.TextElideMode.ElideRight, w - 6)
+    painter.drawText(QRect(0, 0, w, bar), Qt.AlignmentFlag.AlignCenter, elided)
     painter.end()
     return result
 
@@ -138,6 +156,7 @@ class CivitaiPickerDialog(QDialog):
         self._download_running = False
         self._search_generation = 0
         self._known_tags: list[str] = []
+        self._checked_hashes: set[str] = set()
 
         self.setWindowTitle(_("CivitAI Browser"))
         self.setMinimumSize(720, 520)
@@ -226,6 +245,19 @@ class CivitaiPickerDialog(QDialog):
         self._nsfw_combo.currentIndexChanged.connect(self._save_nsfw_setting)
         self._nsfw_combo.currentIndexChanged.connect(self._start_search)
 
+        self._show_combo = QComboBox(self)
+        self._show_combo.addItem(_("All results"), _SHOW_ALL)
+        self._show_combo.addItem(_("Not in library"), _SHOW_NEW)
+        self._show_combo.addItem(_("In library"), _SHOW_INSTALLED)
+        self._show_combo.setToolTip(
+            _(
+                "Hide models you already have (or show only those). Counts a model as"
+                " in your library when the exact version is installed, or another"
+                " version of it is."
+            )
+        )
+        self._show_combo.currentIndexChanged.connect(self._apply_filter)
+
         self._commercial_check = QCheckBox(_("Sellable images only"), self)
         self._commercial_check.setToolTip(
             _(
@@ -248,6 +280,7 @@ class CivitaiPickerDialog(QDialog):
         row2.addWidget(self._arch_combo)
         row2.addWidget(self._tag_combo)
         row2.addWidget(self._nsfw_combo)
+        row2.addWidget(self._show_combo)
         row2.addWidget(self._commercial_check)
         row2.addStretch(1)
         row2.addWidget(size_label)
@@ -357,6 +390,7 @@ class CivitaiPickerDialog(QDialog):
         """Everything in this dialog is cached one way or another - previews, the tag
         vocabulary, the folder list and the installed-model set. Reload the lot, so
         one button covers "I downloaded something elsewhere" as well as stale results."""
+        self._checked_hashes.clear()
         self._refresh_installed()
         self._load_tags()
         self._load_locations()
@@ -442,6 +476,32 @@ class CivitaiPickerDialog(QDialog):
             int(lora.civitai_model_id) for lora in cached if lora.civitai_model_id
         }
 
+    async def _check_installed(self, models: list[CivitaiModel]):
+        """Ask Lora Manager which of these versions are on disk.
+
+        The cached LoRA list is only a hint - it expires, and it is empty until the
+        LoRA browser has been opened once. Lora Manager can filter its list by a batch
+        of hashes, so one request per page of results gives an authoritative answer.
+        """
+        client = root.connection.client_if_connected
+        if client is None:
+            return
+        hashes = []
+        for model in models:
+            for version in model.versions:
+                file = version.primary_file
+                if file and file.sha256 and file.sha256.upper() not in self._checked_hashes:
+                    hashes.append(file.sha256.upper())
+        if not hashes:
+            return
+        self._checked_hashes.update(hashes)
+        kind = "checkpoints" if self._kind_combo.currentData() == _KIND_CHECKPOINT else "loras"
+        found = await fetch_installed_hashes(client._requests, client.url, hashes, kind)
+        if not found:
+            return
+        self._installed_hashes.update(found)
+        self._apply_filter()
+
     def _state_of(self, model: CivitaiModel, version: CivitaiVersion) -> str:
         file = version.primary_file
         if file and file.sha256 and file.sha256.upper() in self._installed_hashes:
@@ -510,6 +570,7 @@ class CivitaiPickerDialog(QDialog):
         self._cursor = cursor
         self._models.extend(models)
         self._apply_filter()
+        eventloop.run(self._check_installed(models))
         tag = self._current_tag()
         if tag and self._known_tags and tag not in self._known_tags:
             # CivitAI ignores an unknown tag instead of returning nothing, so results
@@ -549,6 +610,12 @@ class CivitaiPickerDialog(QDialog):
             if nsfw_mode == _NSFW_HIDE_EXPLICIT and preview_level >= 16:
                 continue
             if client_side_arch and arch_for_base_model(version.base_model) != arch:
+                continue
+            show = self._show_combo.currentData()
+            installed = self._state_of(model, version) != _STATE_NEW
+            if show == _SHOW_NEW and installed:
+                continue
+            if show == _SHOW_INSTALLED and not installed:
                 continue
             result.append((model, version))
         return result
