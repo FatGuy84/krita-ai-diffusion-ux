@@ -61,6 +61,11 @@ _PREVIEW_SIZE_MIN = 64
 _PREVIEW_SIZE_MAX = 384
 _ARCH_ANY = "__any__"
 _PAGE_SIZE = 50
+# CivitAI applies baseModels (and our own rating/library filters run on top) after
+# paging, so a page of 50 can leave a handful of tiles - keep pulling pages until
+# the grid holds at least this many, or the result set runs out.
+_MIN_RESULTS = 24
+_MAX_AUTO_PAGES = 10
 
 _KIND_LORA = "lora"
 _KIND_CHECKPOINT = "checkpoint"
@@ -127,6 +132,20 @@ def _nsfw_request_flag(mode: str) -> bool | None:
     return None
 
 
+def _distinguisher(model: CivitaiModel, version: CivitaiVersion, others: list) -> str:
+    """Something to tell two results with the same title apart.
+
+    CivitAI does host distinct models under identical names, including several by
+    the same uploader, so a tile that looks like a duplicate usually is not one.
+    Prefer the uploader, fall back to the version and finally the model id."""
+    same_name = [m for m, _v in others if m.name == model.name]
+    if model.creator and any(m.creator != model.creator for m in same_name):
+        return model.creator
+    if version.name:
+        return version.name
+    return f"#{model.id}"
+
+
 def _size_label(mb: float) -> str:
     if mb <= 0:
         return ""
@@ -165,6 +184,8 @@ class CivitaiBrowser(QWidget):
         self._checked_hashes: set[str] = set()
         self._batch_cancelled = False
         self._batch_label = ""
+        self._seen_ids: set[int] = set()
+        self._auto_pages = 0
 
         # ── search row ──
         self._search = QLineEdit(self)
@@ -528,6 +549,8 @@ class CivitaiBrowser(QWidget):
         self._search_generation += 1
         self._loading = False
         self._models = []
+        self._seen_ids = set()
+        self._auto_pages = 0
         self._cursor = ""
         self._grid.clear()
         self._preview_cache.clear()
@@ -540,10 +563,12 @@ class CivitaiBrowser(QWidget):
             return
         self._loading = True
         self._status.setText(_("Searching CivitAI…"))
-        eventloop.run(self._fetch())
+        # the generation is captured here, not inside the coroutine: _start_search may
+        # run again before the coroutine starts, and results of the older query would
+        # then be counted as belonging to the newer one
+        eventloop.run(self._fetch(self._search_generation))
 
-    async def _fetch(self):
-        generation = self._search_generation
+    async def _fetch(self, generation: int):
         nsfw_mode = self._nsfw_combo.currentData()
         try:
             models, cursor = await civitai.search_models(
@@ -567,9 +592,22 @@ class CivitaiBrowser(QWidget):
             return  # a newer search replaced this one
         self._loading = False
         self._cursor = cursor
-        self._models.extend(models)
+        # the same model can come back on a later page when the query is re-ranked
+        fresh = [m for m in models if m.id not in self._seen_ids]
+        self._seen_ids.update(m.id for m in fresh)
+        self._models.extend(fresh)
         self._apply_filter()
-        eventloop.run(self._check_installed(models))
+        eventloop.run(self._check_installed(fresh))
+        # a page of 50 raw results can survive as a handful of tiles - keep going
+        # instead of leaving a nearly empty grid that has no scrollbar to trigger
+        # loading the rest
+        if (
+            self._cursor
+            and self._grid.count() < _MIN_RESULTS
+            and self._auto_pages < _MAX_AUTO_PAGES
+        ):
+            self._auto_pages += 1
+            self._fetch_page()
         tag = self._current_tag()
         if tag and self._known_tags and tag not in self._known_tags:
             # CivitAI ignores an unknown tag instead of returning nothing, so results
@@ -627,10 +665,15 @@ class CivitaiBrowser(QWidget):
         # loading more results would yank the user back to the top
         scroll = self._grid.verticalScrollBar().value()
         # rebuilding re-emits selection changes, which would reset the version combo
+        visible = self._visible_models()
+        names = [model.name for model, _version in visible]
         with theme.SignalBlocker(self._grid):
             self._grid.clear()
-            for model, version in self._visible_models():
-                item = QListWidgetItem(model.name)
+            for model, version in visible:
+                label = model.name
+                if names.count(model.name) > 1:
+                    label = f"{model.name} · {_distinguisher(model, version, visible)}"
+                item = QListWidgetItem(label)
                 item.setData(Qt.ItemDataRole.UserRole, model)
                 item.setSizeHint(self._grid.gridSize())
                 item.setToolTip(self._tooltip(model, version))
@@ -643,7 +686,12 @@ class CivitaiBrowser(QWidget):
         QTimer.singleShot(0, lambda: self._grid.verticalScrollBar().setValue(scroll))
         total = len(self._models)
         shown = self._grid.count()
-        more = _("scroll for more") if self._cursor else _("end of results")
+        if self._loading:
+            more = _("loading more…")
+        elif self._cursor:
+            more = _("scroll for more")
+        else:
+            more = _("end of results")
         self._status.setText(f"{shown} / {total} {_('results')} – {more}")
         self._schedule_visible_previews()
 
