@@ -672,13 +672,18 @@ class HistoryWidget(QListWidget):
             menu = QMenu(self)
             menu.addAction(_("Apply Prompt to Field"), self._apply_prompt_to_field)
             menu.addAction(_("Apply Prompt (Evaluated) to Field"), self._apply_prompt_evaluated_to_field)
-            menu.addAction(_("Copy Prompt to Clipboard"), self._copy_prompt_to_clipboard)
-            menu.addAction(_("Copy Prompt (Evaluated) to Clipboard"), self._copy_prompt_evaluated_to_clipboard)
-            menu.addAction(_("Copy Strength"), self._copy_strength)
-            style_action = ensure(menu.addAction(_("Copy Style"), self._copy_style))
+            # "Apply" here means the current settings, not the clipboard - these three
+            # set the style, strength and seed the image was generated with
+            style_action = ensure(menu.addAction(_("Apply Style"), self._apply_style))
+            style_action.setToolTip(_("Select the style this image was generated with"))
             if job is None or Styles.list().find(job.params.style) is None:
                 style_action.setEnabled(False)
-            menu.addAction(_("Copy Seed"), self._copy_seed)
+                style_action.setToolTip(_("The style of this image no longer exists"))
+            menu.addAction(_("Apply Strength"), self._apply_strength)
+            menu.addAction(_("Apply Seed"), self._apply_seed)
+            menu.addSeparator()
+            menu.addAction(_("Copy Prompt to Clipboard"), self._copy_prompt_to_clipboard)
+            menu.addAction(_("Copy Prompt (Evaluated) to Clipboard"), self._copy_prompt_evaluated_to_clipboard)
             menu.addAction(_("Info to Clipboard"), self._info_to_clipboard)
             menu.addSeparator()
             __, index = self.item_info(item)
@@ -743,15 +748,15 @@ class HistoryWidget(QListWidget):
     def _copy_prompt_evaluated_to_clipboard(self):
         self._copy_prompt_to_clipboard(evaluated=True)
 
-    def _copy_strength(self):
+    def _apply_strength(self):
         if job := self.selected_job:
             self._model.strength = job.params.strength
 
-    def _copy_style(self):
+    def _apply_style(self):
         if (job := self.selected_job) and (style := Styles.list().find(job.params.style)):
             self._model.style = style
 
-    def _copy_seed(self):
+    def _apply_seed(self):
         if job := self.selected_job:
             self._model.fixed_seed = True
             self._model.seed = job.params.seed

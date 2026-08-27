@@ -317,6 +317,10 @@ after installing new models to force a re-scan.
   copied to clipboard *and* overwrote your current prompt field in one click,
   which is surprising if you only wanted one of those. Now there are four
   separate entries: Apply/Copy × raw/evaluated prompt.
+* **Apply Style / Strength / Seed**: these entries take the settings an image was
+  generated with and make them current. Upstream calls them "Copy Style" and so
+  on, which reads like they go to the clipboard — they never did. Apply Style is
+  greyed out when the style has since been deleted.
 * **Search the generation history**: a search box above the history list
   filters by prompt text live as you type. A scope dropdown next to it
   narrows the match to "All Prompts", "Raw Only" (the pattern you typed,
