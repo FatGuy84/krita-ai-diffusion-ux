@@ -35,7 +35,7 @@ from ..backend.client import Client
 from ..backend.network import NetworkError
 from ..backend.ollama import EnhanceTask
 from ..document import LayerType
-from ..image import Bounds
+from ..image import Bounds, Extent, Image
 from ..localization import translate as _
 from ..model.properties import Binding, bind
 from ..model.region import Region, RegionLink, RootRegion, translate_prompt
@@ -96,6 +96,22 @@ class InactiveRegionWidget(QFrame):
     def resizeEvent(self, a0: QResizeEvent | None) -> None:
         theme.set_text_clipped(self._prompt, self._text)
         return super().resizeEvent(a0)
+
+
+# Vision models see a fixed number of image tokens anyway, and a full 4k canvas would
+# blow up the base64 payload for no gain.
+describe_max_extent = Extent(1024, 1024)
+
+
+def _canvas_image(model) -> str:
+    """The current canvas as base64 PNG, cropped to the selection if there is one."""
+    doc = model.document
+    image = doc.get_image(doc.selection_bounds)
+    if image.extent.width > describe_max_extent.width or (
+        image.extent.height > describe_max_extent.height
+    ):
+        image = Image.scale_to_fit(image, describe_max_extent)
+    return image.to_base64()
 
 
 class PromptHeader(Enum):
@@ -220,6 +236,7 @@ class ActiveRegionWidget(QFrame):
         self._last_instruction = ""
         self._enhance_running = False
         self._enhance_job: ollama.Generation | None = None
+        self._enhance_task = EnhanceTask.enhance
         self._enhance_started = 0.0
         self._update_enhance_tooltip()
 
@@ -586,6 +603,8 @@ class ActiveRegionWidget(QFrame):
             partial(self._enhance, EnhanceTask.variations),
         )
         menu.addSeparator()
+        menu.addAction(_("Describe the image"), partial(self._enhance, EnhanceTask.describe))
+        menu.addSeparator()
         menu.addAction(_("Modify with instruction..."), self._ask_instruction)
         menu.addAction(_("Prompt batch for generation..."), self._open_prompt_batch)
         menu.addSeparator()
@@ -639,6 +658,7 @@ class ActiveRegionWidget(QFrame):
 
     def _begin_enhance_progress(self, task: EnhanceTask):
         self._enhance_started = time.monotonic()
+        self._enhance_task = task
         self._enhance_button.setIcon(theme.icon("cancel"))
         self._enhance_button.setText(_("Stop"))
         self._enhance_button.setToolTip(_("Stop the running prompt generation"))
@@ -656,7 +676,10 @@ class ActiveRegionWidget(QFrame):
     def _update_enhance_progress(self):
         elapsed = time.monotonic() - self._enhance_started
         words = len(self._enhance_job.text.split()) if self._enhance_job else 0
-        text = _("Writing prompt...") + f" {elapsed:.0f}s"
+        if self._enhance_task is EnhanceTask.describe:
+            text = _("Looking at the image...") + f" {elapsed:.0f}s"
+        else:
+            text = _("Writing prompt...") + f" {elapsed:.0f}s"
         if words > 0:
             text += f" - {words} " + _("words")
         elif elapsed > 3:  # nothing yet: the model is most likely still loading into VRAM
@@ -698,6 +721,7 @@ class ActiveRegionWidget(QFrame):
             protected = ollama.protect(original)
             count = max(2, settings.ollama_variation_count)
             request = ollama.build_prompt(task, protected.text, count, instruction)
+            images = [_canvas_image(model)] if task is EnhanceTask.describe else None
 
             if settings.ollama_free_comfy_vram:
                 if client := root.connection.client_if_connected:
@@ -706,9 +730,10 @@ class ActiveRegionWidget(QFrame):
             self._enhance_job = ollama.Generation()
             response = await self._enhance_job.run(
                 request,
-                system=profile.system,
-                model=profile.model,
+                system=profile.system_for(task),
+                model=profile.model_for(task),
                 temperature=ollama.temperature_for(task),
+                images=images,
             )
             if not response:
                 self._report_error(_("The language model returned an empty response"))

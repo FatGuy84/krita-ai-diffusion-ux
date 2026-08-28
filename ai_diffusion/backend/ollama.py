@@ -26,6 +26,7 @@ class EnhanceTask(Enum):
     detail = "detail"
     variations = "variations"
     instruct = "instruct"
+    describe = "describe"
 
 
 _task_instructions = {
@@ -48,6 +49,13 @@ _task_instructions = {
         " Delete whatever contradicts the change instead of keeping both versions, and"
         " never state what was removed - a removed thing is simply absent from the"
         " answer.\n\nChange to apply: {instruction}"
+    ),
+    EnhanceTask.describe: (
+        "Look at the attached image and write an image generation prompt which would"
+        " recreate it. Describe only what is actually visible - subject, appearance,"
+        " clothing, pose, expression, setting, props, lighting, colours and camera angle."
+        " Do not invent anything that is not in the image, do not mention that this is an"
+        " image or a description, and answer with the prompt only.{instruction}"
     ),
     EnhanceTask.variations: (
         "Write {count} different variations of the following prompt. Vary pose, setting,"
@@ -72,7 +80,7 @@ async def list_models() -> list[str]:
 
 # Tasks which modify an existing prompt rather than inventing one. A high temperature
 # makes the model drift off and keep contradicting tags around, so it gets capped.
-_conservative_tasks = {EnhanceTask.instruct, EnhanceTask.detail}
+_conservative_tasks = {EnhanceTask.instruct, EnhanceTask.detail, EnhanceTask.describe}
 _conservative_temperature = 0.6
 
 
@@ -90,6 +98,7 @@ def _request_body(
     stream: bool,
     seed: int | None = None,
     keep_alive: int | None = None,
+    images: list[str] | None = None,
 ):
     options: dict = {
         "temperature": settings.ollama_temperature if temperature is None else temperature,
@@ -107,6 +116,8 @@ def _request_body(
     }
     if system:  # without it the model keeps whatever SYSTEM its Modelfile defines
         data["system"] = system
+    if images:  # base64 PNG, only understood by vision models
+        data["images"] = images
     return data
 
 
@@ -117,10 +128,11 @@ async def generate(
     model: str = "",
     temperature: float | None = None,
     timeout: float | None = None,
+    images: list[str] | None = None,
 ) -> str:
     # The reply is consumed as a single JSON document - streaming would produce
     # newline-delimited JSON which the request manager cannot parse.
-    data = _request_body(prompt, system, model, temperature, stream=False)
+    data = _request_body(prompt, system, model, temperature, stream=False, images=images)
     timeout = timeout or settings.ollama_timeout
     result = await _requests.http("POST", f"{url()}/api/generate", data, timeout=timeout)
     return clean_response(result.get("response", ""))
@@ -152,10 +164,11 @@ class Generation:
         timeout: float | None = None,
         seed: int | None = None,
         keep_alive: int | None = None,
+        images: list[str] | None = None,
     ) -> str:
         self._text = ""
         self._buffer = b""
-        data = _request_body(prompt, system, model, temperature, True, seed, keep_alive)
+        data = _request_body(prompt, system, model, temperature, True, seed, keep_alive, images)
         request = QNetworkRequest(QUrl(f"{url()}/api/generate"))
         request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json")
         # applies to inactivity, not to the total duration - a slow model is fine as long
@@ -308,6 +321,18 @@ class Profile:
     name: str
     system: str = ""  # empty: keep the system prompt baked into the Ollama model
     model: str = ""  # empty: use the model selected in the settings
+    describe: str = ""  # system prompt for image description, empty: reuse `system`
+    describe_model: str = ""  # vision model, empty: fall back to `model`
+
+    def system_for(self, task: EnhanceTask) -> str:
+        if task is EnhanceTask.describe and self.describe:
+            return self.describe
+        return self.system
+
+    def model_for(self, task: EnhanceTask) -> str:
+        if task is EnhanceTask.describe:
+            return self.describe_model or self.model
+        return self.model
 
 
 class Profiles:
@@ -322,7 +347,12 @@ class Profiles:
     def __init__(self, data: dict):
         self._profiles = {
             key: Profile(
-                key, value.get("name", key), value.get("system", ""), value.get("model", "")
+                key,
+                value.get("name", key),
+                value.get("system", ""),
+                value.get("model", ""),
+                value.get("describe", ""),
+                value.get("describe_model", ""),
             )
             for key, value in (data.get("profiles") or {}).items()
         }
@@ -440,6 +470,10 @@ def build_pool_prompt(mode: PoolMode, base: str, avoid: list[str] | None = None)
 
 
 def build_prompt(task: EnhanceTask, prompt: str, count: int = 4, instruction: str = "") -> str:
+    if task is EnhanceTask.describe:
+        # the image carries the content, an existing prompt is not part of the request
+        extra = f"\n\nAdditional instruction: {instruction}" if instruction.strip() else ""
+        return _task_instructions[task].format(count=count, instruction=extra)
     task_text = _task_instructions[task].format(count=count, instruction=instruction)
     if not prompt.strip():
         if task is EnhanceTask.instruct:
