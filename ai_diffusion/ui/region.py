@@ -235,9 +235,13 @@ class ActiveRegionWidget(QFrame):
         self._enhance_button.clicked.connect(self._enhance_clicked)
         self._enhance_button.setVisible(settings.ollama_enabled)
         # a permanent border marks this as an AI action, distinct from the plain
-        # auto-raise buttons around it
+        # auto-raise buttons around it. Any stylesheet on a MenuButtonPopup button
+        # makes Qt stop reserving space for icon/text/drop-down arrow on its own,
+        # so the padding has to be spelled out here or the text gets clipped.
         self._enhance_button.setStyleSheet(
-            f"QToolButton {{ border: 1px solid {theme.strong_highlight}; border-radius: 3px; }}"
+            f"QToolButton {{ border: 1px solid {theme.strong_highlight}; border-radius: 3px;"
+            " padding: 2px 4px 2px 4px; }"
+            "QToolButton::menu-button { width: 14px; }"
         )
         self._enhance_backup: list[str] = []
         self._enhance_backup_limit = 20
