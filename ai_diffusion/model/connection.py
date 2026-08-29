@@ -165,10 +165,17 @@ class Connection(QObject, ObservableProperties):
 
     def refresh(self):
         async def _refresh():
-            await self.client.refresh()
-            self.missing_resources = self.client.missing_resources
-            self.models_changed.emit()
-            self.state_changed.emit(self.state)
+            # models_changed must fire even on failure - callers like the LoRA
+            # browser's "Scan server" button wait for it to re-enable themselves,
+            # and a network hiccup or a slow ComfyUI must not leave them stuck.
+            try:
+                await self.client.refresh()
+                self.missing_resources = self.client.missing_resources
+            except Exception as e:
+                util.log_error(e)
+            finally:
+                self.models_changed.emit()
+                self.state_changed.emit(self.state)
 
         if self.state is ConnectionState.connected:
             eventloop.run(_refresh())
