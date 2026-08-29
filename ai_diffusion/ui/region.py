@@ -15,6 +15,7 @@ from PyQt5.QtGui import (
     QPainter,
     QPixmap,
     QResizeEvent,
+    QTextCursor,
 )
 from PyQt5.QtWidgets import (
     QDialog,
@@ -40,6 +41,7 @@ from ..localization import translate as _
 from ..model.properties import Binding, bind
 from ..model.region import Region, RegionLink, RootRegion, translate_prompt
 from ..model.root import root
+from ..text import char16_index_to_str_index, str_index_to_char16_index
 from ..util import client_logger as log, ensure
 from . import theme
 from .control import ControlListWidget
@@ -237,7 +239,8 @@ class ActiveRegionWidget(QFrame):
         self._enhance_button.setStyleSheet(
             f"QToolButton {{ border: 1px solid {theme.strong_highlight}; border-radius: 3px; }}"
         )
-        self._enhance_backup: str | None = None
+        self._enhance_backup: list[str] = []
+        self._enhance_backup_limit = 20
         self._last_instruction = ""
         self._enhance_running = False
         self._enhance_job: ollama.Generation | None = None
@@ -316,6 +319,10 @@ class ActiveRegionWidget(QFrame):
         if region != self._region:
             self._region = region
             self._setup_bindings(region)
+            # an undo stack from a different region's text makes no sense here
+            self._enhance_backup.clear()
+            if self._revert_action is not None:
+                self._revert_action.setEnabled(False)
 
     def _setup_bindings(self, region: RootRegion | Region | None):
         Binding.disconnect_all(self._bindings)
@@ -601,6 +608,10 @@ class ActiveRegionWidget(QFrame):
     def _create_enhance_menu(self):
         menu = QMenu(self)
         menu.addAction(_("Enhance"), partial(self._enhance, EnhanceTask.enhance))
+        self._enhance_selection_action = menu.addAction(
+            _("Enhance selection"), partial(self._enhance, EnhanceTask.enhance, "", True)
+        )
+        self._enhance_selection_action.setVisible(False)
         menu.addAction(_("Rewrite from scratch"), partial(self._enhance, EnhanceTask.rewrite))
         menu.addAction(_("Add detail only"), partial(self._enhance, EnhanceTask.detail))
         menu.addAction(
@@ -615,7 +626,12 @@ class ActiveRegionWidget(QFrame):
         menu.addSeparator()
         self._revert_action = menu.addAction(_("Revert"), self._revert_enhance)
         self._revert_action.setEnabled(False)
+        menu.aboutToShow.connect(self._update_enhance_selection_visibility)
         return menu
+
+    def _update_enhance_selection_visibility(self):
+        # only shown when there's something to send instead of the whole prompt
+        self._enhance_selection_action.setVisible(self.positive.textCursor().hasSelection())
 
     def _update_enhance_tooltip(self):
         model = settings.ollama_model or _("not configured")
@@ -624,10 +640,9 @@ class ActiveRegionWidget(QFrame):
         )
 
     def _revert_enhance(self):
-        if self._enhance_backup is not None and self.region is not None:
-            self.region.positive = self._enhance_backup
-            self._enhance_backup = None
-            self._revert_action.setEnabled(False)
+        if self._enhance_backup and self.region is not None:
+            self.region.positive = self._enhance_backup.pop()
+            self._revert_action.setEnabled(bool(self._enhance_backup))
 
     def _open_prompt_batch(self):
         """Build a pool of prompts before generating, so a batch or a generate loop
@@ -691,7 +706,7 @@ class ActiveRegionWidget(QFrame):
             text += " - " + _("loading model")
         theme.set_text_clipped(self._enhance_progress, text)
 
-    def _enhance(self, task: EnhanceTask, instruction: str = ""):
+    def _enhance(self, task: EnhanceTask, instruction: str = "", use_selection: bool = False):
         if self._enhance_running:
             return
         if not settings.ollama_model:
@@ -699,7 +714,7 @@ class ActiveRegionWidget(QFrame):
                 _("No language model selected. Configure one in Settings -> Prompt AI.")
             )
             return
-        eventloop.run(self._run_enhance(task, instruction))
+        eventloop.run(self._run_enhance(task, instruction, use_selection))
 
     def _report_error(self, message: str):
         if model := root.active_model:
@@ -707,15 +722,29 @@ class ActiveRegionWidget(QFrame):
         else:
             log.error(message)
 
-    async def _run_enhance(self, task: EnhanceTask, instruction: str = ""):
+    async def _run_enhance(
+        self, task: EnhanceTask, instruction: str = "", use_selection: bool = False
+    ):
         region = self.region
         model = root.active_model
         if region is None or model is None:
             return
 
+        original = region.positive
+        selection: tuple[int, int] | None = None
+        if use_selection:
+            cursor = self.positive.textCursor()
+            if not cursor.hasSelection():
+                return
+            start = char16_index_to_str_index(original, cursor.selectionStart())
+            end = char16_index_to_str_index(original, cursor.selectionEnd())
+            selection = (start, end)
+            source = original[start:end]
+        else:
+            source = original
+
         self._enhance_running = True
         self._begin_enhance_progress(task)
-        original = region.positive
         try:
             family = model.active_style.effective_family(model.arch)
             profile = ollama.Profiles.instance().for_family(family)
@@ -723,7 +752,7 @@ class ActiveRegionWidget(QFrame):
                 self._report_error(_("No prompt profile found for") + f" {family}")
                 return
 
-            protected = ollama.protect(original)
+            protected = ollama.protect(source)
             count = max(2, settings.ollama_variation_count)
             request = ollama.build_prompt(task, protected.text, count, instruction)
             images = [_canvas_image(model)] if task is EnhanceTask.describe else None
@@ -751,16 +780,34 @@ class ActiveRegionWidget(QFrame):
                     self._report_error(_("The language model did not return variations"))
                     return
                 result = "[[" + "|".join(lines) + "]]"
-            elif task is EnhanceTask.detail:
-                result = f"{original.rstrip(' ,')}, {response}" if original.strip() else response
-                protected = ollama.ProtectedPrompt(result, [])  # tokens are still in `original`
+            elif task is EnhanceTask.detail and not selection:
+                result = f"{source.rstrip(' ,')}, {response}" if source.strip() else response
+                protected = ollama.ProtectedPrompt(result, [])  # tokens are still in `source`
             else:
                 result = response
+            result = protected.restore(result)
 
-            if self.region is region and region.positive == original:
-                region.positive = protected.restore(result)
-                self._enhance_backup = original
-                self._revert_action.setEnabled(True)
+            if self.region is not region or region.positive != original:
+                return  # the prompt changed underneath us while the model was writing
+
+            if selection:
+                start, end = selection
+                new_text = original[:start] + result + original[end:]
+                region.positive = new_text
+                cursor = self.positive.textCursor()
+                cursor.setPosition(str_index_to_char16_index(new_text, start))
+                cursor.setPosition(
+                    str_index_to_char16_index(new_text, start + len(result)),
+                    QTextCursor.MoveMode.KeepAnchor,
+                )
+                self.positive.setTextCursor(cursor)
+            else:
+                region.positive = result
+
+            if len(self._enhance_backup) >= self._enhance_backup_limit:
+                self._enhance_backup.pop(0)
+            self._enhance_backup.append(original)
+            self._revert_action.setEnabled(True)
         except asyncio.CancelledError:
             pass  # stopped by the user
         except NetworkError as e:
