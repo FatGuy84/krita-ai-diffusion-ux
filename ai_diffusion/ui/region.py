@@ -226,12 +226,17 @@ class ActiveRegionWidget(QFrame):
         self._enhance_button = QToolButton(self)
         self._enhance_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._enhance_button.setIcon(theme.icon("enhance"))
-        self._enhance_button.setText(_("Enhance"))
+        self._enhance_button.setText(_("Prompt AI"))
         self._enhance_button.setAutoRaise(True)
         self._enhance_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._enhance_button.setMenu(self._create_enhance_menu())
         self._enhance_button.clicked.connect(self._enhance_clicked)
         self._enhance_button.setVisible(settings.ollama_enabled)
+        # a permanent border marks this as an AI action, distinct from the plain
+        # auto-raise buttons around it
+        self._enhance_button.setStyleSheet(
+            f"QToolButton {{ border: 1px solid {theme.strong_highlight}; border-radius: 3px; }}"
+        )
         self._enhance_backup: str | None = None
         self._last_instruction = ""
         self._enhance_running = False
@@ -670,7 +675,7 @@ class ActiveRegionWidget(QFrame):
         self._enhance_timer.stop()
         self._enhance_progress.setVisible(False)
         self._enhance_button.setIcon(theme.icon("enhance"))
-        self._enhance_button.setText(_("Enhance"))
+        self._enhance_button.setText(_("Prompt AI"))
         self._update_enhance_tooltip()
 
     def _update_enhance_progress(self):

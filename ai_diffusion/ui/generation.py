@@ -678,7 +678,10 @@ class HistoryWidget(QListWidget):
             badge = self._eagle_icon
             thumb.draw_image(
                 badge,
-                offset=(thumb.extent.width - badge.extent.width - 4, thumb.extent.height - badge.extent.height - 4),
+                offset=(
+                    thumb.extent.width - badge.extent.width - 4,
+                    thumb.extent.height - badge.extent.height - 4,
+                ),
             )
         return thumb.to_icon()
 
@@ -1165,9 +1168,7 @@ class GenerationWidget(QWidget):
         self.loop_button.setIcon(self._loop_icon)
         self.loop_button.setCheckable(True)
         self.loop_button.setFixedHeight(self.generate_button.height() - 2)
-        self.loop_button.setToolTip(
-            _("Generate continuously until stopped - click again to stop")
-        )
+        self.loop_button.setToolTip(_("Generate continuously until stopped - click again to stop"))
         # make the active state clearly visible (barely showed in the dark theme)
         self.loop_button.setStyleSheet(
             f"QToolButton:checked {{ background-color: {theme.active};"
@@ -1201,21 +1202,32 @@ class GenerationWidget(QWidget):
             _("Search the raw prompt text, the evaluated text (wildcards resolved), or both")
         )
 
+        # make the active state clearly visible (barely showed in the dark theme),
+        # same treatment as the loop button
+        _filter_checked_style = (
+            f"QToolButton:checked {{ background-color: {theme.active};"
+            f" border: 1px solid {theme.strong_highlight}; border-radius: 3px; }}"
+        )
+
         self.history_favorites_only = QToolButton(self)
         self.history_favorites_only.setIcon(HistoryWidget._favorite_icon.to_icon())
         self.history_favorites_only.setCheckable(True)
         self.history_favorites_only.setToolTip(_("Show only favorite images (F to toggle)"))
+        self.history_favorites_only.setStyleSheet(_filter_checked_style)
 
         self.history_applied_only = QToolButton(self)
         self.history_applied_only.setIcon(theme.icon("apply"))
         self.history_applied_only.setCheckable(True)
         self.history_applied_only.setToolTip(_("Show only images that were applied to the canvas"))
+        self.history_applied_only.setStyleSheet(_filter_checked_style)
 
         self.history_min_rating = QComboBox(self)
         self.history_min_rating.addItem(_("Any Rating"), 0)
         for stars in range(1, 6):
             self.history_min_rating.addItem("★" * stars, stars)
-        self.history_min_rating.setToolTip(_("Show only images with exactly this rating (1-5 to rate)"))
+        self.history_min_rating.setToolTip(
+            _("Show only images with exactly this rating (1-5 to rate)")
+        )
 
         history_filter_layout = QHBoxLayout()
         history_filter_layout.addWidget(self.history_search, 1)
