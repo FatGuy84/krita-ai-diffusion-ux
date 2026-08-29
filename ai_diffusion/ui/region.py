@@ -228,7 +228,7 @@ class ActiveRegionWidget(QFrame):
         self._enhance_button = QToolButton(self)
         self._enhance_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._enhance_button.setIcon(theme.icon("enhance"))
-        self._enhance_button.setText(_("Prompt AI"))
+        self._enhance_button.setText(_("AI"))
         self._enhance_button.setAutoRaise(True)
         self._enhance_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._enhance_button.setMenu(self._create_enhance_menu())
@@ -690,7 +690,7 @@ class ActiveRegionWidget(QFrame):
         self._enhance_timer.stop()
         self._enhance_progress.setVisible(False)
         self._enhance_button.setIcon(theme.icon("enhance"))
-        self._enhance_button.setText(_("Prompt AI"))
+        self._enhance_button.setText(_("AI"))
         self._update_enhance_tooltip()
 
     def _update_enhance_progress(self):
