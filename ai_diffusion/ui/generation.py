@@ -643,6 +643,9 @@ class HistoryWidget(QListWidget):
             elif e.key() == Qt.Key.Key_R:
                 self._save_as_recipe()
                 e.accept()
+            elif e.key() == Qt.Key.Key_E:
+                self._save_to_eagle()
+                e.accept()
             elif Qt.Key.Key_0 <= e.key() <= Qt.Key.Key_5:
                 self._set_selected_rating(e.key() - Qt.Key.Key_0)
                 e.accept()
@@ -745,7 +748,7 @@ class HistoryWidget(QListWidget):
             )
             clear_rating.setEnabled(current_rating > 0)
             menu.addSeparator()
-            menu.addAction(_("Save to Eagle"), self._save_to_eagle)
+            menu.addAction(_("Save to Eagle") + "\tE", self._save_to_eagle)
             menu.addAction(_("Save as Recipe") + "\tR", self._save_as_recipe)
             save_action = ensure(menu.addAction(_("Save Image") + "\tCtrl+S", self._save_image))
             if self._model.document.filename == "":
