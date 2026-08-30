@@ -240,7 +240,7 @@ class ActiveRegionWidget(QFrame):
         # so the padding has to be spelled out here or the text gets clipped.
         self._enhance_button.setStyleSheet(
             f"QToolButton {{ border: 1px solid {theme.strong_highlight}; border-radius: 3px;"
-            " padding: 2px 4px 2px 4px; }"
+            " padding: 2px 8px 2px 4px; }"
             "QToolButton::menu-button { width: 14px; }"
         )
         self._enhance_backup: list[str] = []
