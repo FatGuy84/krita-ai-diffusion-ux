@@ -31,7 +31,6 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QListView,
@@ -58,7 +57,6 @@ from ..model.model import DocumentModel, ProgressKind, Workspace
 from ..model.properties import Bind, Binding, bind, bind_combo, bind_toggle
 from ..model.region import RootRegion
 from ..model.root import root
-from ..prompt_library import PromptLibrary
 from ..settings import settings
 from ..text import create_mode_label
 from ..style import Styles
@@ -125,25 +123,13 @@ _SEARCH_SCOPE_RAW = "raw"
 _SEARCH_SCOPE_EVAL = "eval"
 
 
-def _shorten_for_title(text: str, max_length: int = 40) -> str:
-    """A default title guess from a prompt - cut at a word/comma boundary rather
-    than mid-word, since the full prompt is unusable as a library entry title."""
-    flat = " ".join(text.split())
-    if len(flat) <= max_length:
-        return flat
-    cut = flat[:max_length]
-    boundary = max(cut.rfind(","), cut.rfind(" "))
-    if boundary > max_length // 2:
-        cut = cut[:boundary]
-    return cut.rstrip(" ,") + "…"
-
-
 class HistoryWidget(QListWidget):
     _model: DocumentModel
     _connections: list[QMetaObject.Connection]
     _last_job_params: JobParams | None = None
 
     item_activated = pyqtSignal(QListWidgetItem)
+    save_as_prompt_requested = pyqtSignal(str, str, object)  # prompt, negative, Image
 
     _thumb_size = 96
     _applied_icon = Image.load(theme.icon_path / "star.png")
@@ -873,8 +859,8 @@ class HistoryWidget(QListWidget):
         # unlike Recipe (checkpoint + LoRA stack fetched via the Lora Manager server),
         # this is a plain local prompt snippet with a thumbnail - see prompt_library.py.
         # job.params.name is the full (evaluated) prompt text, unusable as a title, so
-        # ask for a short one instead - prefilled with a truncated guess.
-        library = PromptLibrary.instance()
+        # this hands off to the Prompt Picker itself rather than a plain input dialog -
+        # text/negative/preview arrive pre-filled, only the name needs typing.
         items = self.selectedItems()
         for item in items:
             job_id, image_index = self.item_info(item)
@@ -884,13 +870,7 @@ class HistoryWidget(QListWidget):
                 continue
             prompt = job.params.prompt
             negative = job.params.metadata.get("negative_prompt", "")
-            title, ok = QInputDialog.getText(
-                self, _("Save as Prompt"), _("Name:"), text=_shorten_for_title(prompt)
-            )
-            if not ok or not title.strip():
-                continue
-            entry = library.add(title.strip(), prompt, negative=negative)
-            library.save_preview(entry.id, job.results[index])
+            self.save_as_prompt_requested.emit(prompt, negative, job.results[index])
 
     def _toggle_favorite(self):
         items = self.selectedItems()
@@ -1292,6 +1272,7 @@ class GenerationWidget(QWidget):
 
         self.history = HistoryWidget(self)
         self.history.item_activated.connect(self.apply_result)
+        self.history.save_as_prompt_requested.connect(self._save_as_prompt_entry)
         self.history_search.textChanged.connect(self.history.set_search_filter)
         self.history_search_scope.currentIndexChanged.connect(
             lambda: self.history.set_search_scope(self.history_search_scope.currentData())
@@ -1349,6 +1330,9 @@ class GenerationWidget(QWidget):
     def apply_result(self, item: QListWidgetItem):
         job_id, index = self.history.item_info(item)
         self.model.apply_generated_result(job_id, index)
+
+    def _save_as_prompt_entry(self, prompt: str, negative: str, image):
+        self.region_prompt.open_prompt_picker_with(prompt, negative, image)
 
     _inpaint_text: ClassVar[dict[InpaintMode, str]] = {
         InpaintMode.automatic: _("Default (Auto-detect)"),

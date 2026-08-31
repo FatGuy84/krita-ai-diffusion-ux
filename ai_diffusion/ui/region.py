@@ -864,13 +864,26 @@ class ActiveRegionWidget(QFrame):
         self._wildcard_dialog.activateWindow()
 
     def _open_prompt_picker(self):
+        self._ensure_prompt_dialog()
+        self._prompt_dialog.show()
+        self._prompt_dialog.raise_()
+        self._prompt_dialog.activateWindow()
+
+    def _ensure_prompt_dialog(self):
         from .prompt_picker import PromptPickerDialog
 
         if self._prompt_dialog is None:
             self._prompt_dialog = PromptPickerDialog(parent=self)
-        self._prompt_dialog.show()
-        self._prompt_dialog.raise_()
-        self._prompt_dialog.activateWindow()
+        return self._prompt_dialog
+
+    def open_prompt_picker_with(self, text: str, negative: str, image):
+        """Open the Prompt Picker with a new entry pre-filled from a history image -
+        only the title needs typing. See HistoryWidget.save_as_prompt_requested."""
+        dialog = self._ensure_prompt_dialog()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        dialog.browser.create_from_image(text, negative, image)
 
     def resizeEvent(self, a0):
         super().resizeEvent(a0)
@@ -990,6 +1003,9 @@ class RegionPromptWidget(QWidget):
             return
         self._regions = regions
         self._setup_bindings()
+
+    def open_prompt_picker_with(self, text: str, negative: str, image):
+        self._prompt.open_prompt_picker_with(text, negative, image)
 
     def _setup_bindings(self):
         Binding.disconnect_all(self._bindings)

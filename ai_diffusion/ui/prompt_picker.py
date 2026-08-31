@@ -34,6 +34,7 @@ _POS_REPLACE = "replace"
 _SORT_NAME = "name"
 _SORT_CATEGORY = "category"
 _SORT_RECENT = "recent"
+_SORT_CREATED = "created"
 _CATEGORY_ANY = "__any__"
 _CATEGORY_NONE = "__none__"
 
@@ -66,6 +67,7 @@ class PromptBrowser(QWidget):
         self._sort_combo.addItem(_("Name"), _SORT_NAME)
         self._sort_combo.addItem(_("Category"), _SORT_CATEGORY)
         self._sort_combo.addItem(_("Recently Used"), _SORT_RECENT)
+        self._sort_combo.addItem(_("Date Added"), _SORT_CREATED)
         idx = self._sort_combo.findData(settings.prompt_browser_sort)
         self._sort_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._sort_combo.currentIndexChanged.connect(self._apply_filter)
@@ -226,6 +228,8 @@ class PromptBrowser(QWidget):
             return (entry.category.lower(), entry.title.lower())
         if sort == _SORT_RECENT:
             return -entry.last_used
+        if sort == _SORT_CREATED:
+            return -entry.created
         return entry.title.lower()
 
     def _save_sort_setting(self):
@@ -419,6 +423,17 @@ class PromptBrowser(QWidget):
         self._select_item_by_id(entry.id)
         self._title_edit.setFocus()
         self._title_edit.selectAll()
+
+    def create_from_image(self, text: str, negative: str, image) -> PromptEntry:
+        """Called from the history panel's "Save as Prompt" - text/negative/preview
+        arrive pre-filled, only the title is left for the user to type over."""
+        entry = self._library.add(_("New Prompt"), text, negative=negative)
+        self._library.save_preview(entry.id, image)
+        self._apply_filter()
+        self._select_item_by_id(entry.id)
+        self._title_edit.setFocus()
+        self._title_edit.selectAll()
+        return entry
 
     # -- insertion --
 
