@@ -259,16 +259,25 @@ class ActiveRegionWidget(QFrame):
         self._enhance_timer.setInterval(200)
         self._enhance_timer.timeout.connect(self._update_enhance_progress)
 
-        prompt_tools_layout = QHBoxLayout()
+        # left-aligned, grouped by what they do: insert saved/dynamic content first
+        # (Prompts -> Wildcards -> Recipe -> LoRA, increasing in scope from a single
+        # snippet to a whole checkpoint+LoRA+prompt bundle), AI last since it acts on
+        # whatever text is already in the field rather than inserting new content
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setContentsMargins(0, 0, 0, 0)
+        buttons_layout.setSpacing(2)
+        buttons_layout.addWidget(self._prompt_browse_button)
+        buttons_layout.addWidget(self._wildcard_browse_button)
+        buttons_layout.addWidget(self._recipe_browse_button)
+        buttons_layout.addWidget(self._lora_browse_button)
+        buttons_layout.addWidget(self._enhance_button)
+        buttons_layout.addStretch(1)
+
+        prompt_tools_layout = QVBoxLayout()
         prompt_tools_layout.setContentsMargins(0, 0, 0, 0)
-        prompt_tools_layout.setSpacing(2)
-        prompt_tools_layout.addWidget(self._enhance_progress, 1)
-        prompt_tools_layout.addStretch()
-        prompt_tools_layout.addWidget(self._enhance_button)
-        prompt_tools_layout.addWidget(self._prompt_browse_button)
-        prompt_tools_layout.addWidget(self._wildcard_browse_button)
-        prompt_tools_layout.addWidget(self._recipe_browse_button)
-        prompt_tools_layout.addWidget(self._lora_browse_button)
+        prompt_tools_layout.setSpacing(0)
+        prompt_tools_layout.addLayout(buttons_layout)
+        prompt_tools_layout.addWidget(self._enhance_progress)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)

@@ -94,9 +94,10 @@ class PromptBrowser(QWidget):
         self._title_edit.setPlaceholderText(_("Title"))
         self._title_edit.textChanged.connect(self._on_edited)
 
-        self._category_edit = QLineEdit(self)
-        self._category_edit.setPlaceholderText(_("Category (optional)"))
-        self._category_edit.textChanged.connect(self._on_edited)
+        self._category_edit = QComboBox(self)
+        self._category_edit.setEditable(True)
+        self._category_edit.lineEdit().setPlaceholderText(_("Category (optional)"))
+        self._category_edit.editTextChanged.connect(self._on_edited)
 
         self._favorite_check = QCheckBox(_("Favorite"), self)
         self._favorite_check.toggled.connect(self._on_edited)
@@ -210,6 +211,15 @@ class PromptBrowser(QWidget):
         self._category_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._category_combo.blockSignals(False)
 
+        # the edit-panel category field: same list, but editable to allow a new one
+        current_text = self._category_edit.currentText()
+        self._category_edit.blockSignals(True)
+        self._category_edit.clear()
+        self._category_edit.addItem("")
+        self._category_edit.addItems(self._library.categories())
+        self._category_edit.setCurrentText(current_text)
+        self._category_edit.blockSignals(False)
+
     def _sort_key(self, entry: PromptEntry):
         sort = self._sort_combo.currentData()
         if sort == _SORT_CATEGORY:
@@ -299,14 +309,14 @@ class PromptBrowser(QWidget):
             self._save_btn.setEnabled(False)
             if entry is None:
                 self._title_edit.setText("")
-                self._category_edit.setText("")
+                self._category_edit.setCurrentText("")
                 self._text_edit.setPlainText("")
                 self._negative_edit.setPlainText("")
                 self._favorite_check.setChecked(False)
                 self._preview_label.clear()
                 return
             self._title_edit.setText(entry.title)
-            self._category_edit.setText(entry.category)
+            self._category_edit.setCurrentText(entry.category)
             self._text_edit.setPlainText(entry.text)
             self._negative_edit.setPlainText(entry.negative)
             self._favorite_check.setChecked(entry.favorite)
@@ -355,7 +365,7 @@ class PromptBrowser(QWidget):
         self._library.update(
             self._current_id,
             title=title,
-            category=self._category_edit.text().strip(),
+            category=self._category_edit.currentText().strip(),
             text=self._text_edit.toPlainText(),
             negative=self._negative_edit.toPlainText(),
             favorite=self._favorite_check.isChecked(),
