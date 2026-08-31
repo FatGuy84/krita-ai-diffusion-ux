@@ -31,6 +31,7 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListView,
@@ -122,6 +123,19 @@ def _make_badge(icon_name: str, disc_color: QColor, size: int = 30) -> Image:
 _SEARCH_SCOPE_ALL = "all"
 _SEARCH_SCOPE_RAW = "raw"
 _SEARCH_SCOPE_EVAL = "eval"
+
+
+def _shorten_for_title(text: str, max_length: int = 40) -> str:
+    """A default title guess from a prompt - cut at a word/comma boundary rather
+    than mid-word, since the full prompt is unusable as a library entry title."""
+    flat = " ".join(text.split())
+    if len(flat) <= max_length:
+        return flat
+    cut = flat[:max_length]
+    boundary = max(cut.rfind(","), cut.rfind(" "))
+    if boundary > max_length // 2:
+        cut = cut[:boundary]
+    return cut.rstrip(" ,") + "…"
 
 
 class HistoryWidget(QListWidget):
@@ -857,7 +871,9 @@ class HistoryWidget(QListWidget):
 
     def _save_as_prompt(self):
         # unlike Recipe (checkpoint + LoRA stack fetched via the Lora Manager server),
-        # this is a plain local prompt snippet with a thumbnail - see prompt_library.py
+        # this is a plain local prompt snippet with a thumbnail - see prompt_library.py.
+        # job.params.name is the full (evaluated) prompt text, unusable as a title, so
+        # ask for a short one instead - prefilled with a truncated guess.
         library = PromptLibrary.instance()
         items = self.selectedItems()
         for item in items:
@@ -868,7 +884,12 @@ class HistoryWidget(QListWidget):
                 continue
             prompt = job.params.prompt
             negative = job.params.metadata.get("negative_prompt", "")
-            entry = library.add(job.params.name or _("New Prompt"), prompt, negative=negative)
+            title, ok = QInputDialog.getText(
+                self, _("Save as Prompt"), _("Name:"), text=_shorten_for_title(prompt)
+            )
+            if not ok or not title.strip():
+                continue
+            entry = library.add(title.strip(), prompt, negative=negative)
             library.save_preview(entry.id, job.results[index])
 
     def _toggle_favorite(self):
