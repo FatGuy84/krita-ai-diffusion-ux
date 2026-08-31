@@ -658,6 +658,9 @@ class Settings(QObject):
     wildcard_browser_sort: str
     _wildcard_browser_sort = Setting("Wildcard Browser Sort", "name")
 
+    prompt_browser_sort: str
+    _prompt_browser_sort = Setting("Prompt Browser Sort", "name")
+
     # Folder where intermediate images are stored for debug purposes (default: None)
     debug_image_folder = os.environ.get("KRITA_AI_DIFFUSION_DEBUG_IMAGE")
 

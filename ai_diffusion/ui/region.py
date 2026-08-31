@@ -225,6 +225,15 @@ class ActiveRegionWidget(QFrame):
         self._wildcard_browse_button.clicked.connect(self._open_wildcard_picker)
         self._wildcard_dialog = None
 
+        self._prompt_browse_button = QToolButton(self)
+        self._prompt_browse_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._prompt_browse_button.setIcon(theme.icon("region-prompt"))
+        self._prompt_browse_button.setText(_("Prompts"))
+        self._prompt_browse_button.setToolTip(_("Browse and reuse saved prompt snippets"))
+        self._prompt_browse_button.setAutoRaise(True)
+        self._prompt_browse_button.clicked.connect(self._open_prompt_picker)
+        self._prompt_dialog = None
+
         self._enhance_button = QToolButton(self)
         self._enhance_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._enhance_button.setIcon(theme.icon("enhance"))
@@ -256,6 +265,7 @@ class ActiveRegionWidget(QFrame):
         prompt_tools_layout.addWidget(self._enhance_progress, 1)
         prompt_tools_layout.addStretch()
         prompt_tools_layout.addWidget(self._enhance_button)
+        prompt_tools_layout.addWidget(self._prompt_browse_button)
         prompt_tools_layout.addWidget(self._wildcard_browse_button)
         prompt_tools_layout.addWidget(self._recipe_browse_button)
         prompt_tools_layout.addWidget(self._lora_browse_button)
@@ -843,6 +853,15 @@ class ActiveRegionWidget(QFrame):
         self._wildcard_dialog.show()
         self._wildcard_dialog.raise_()
         self._wildcard_dialog.activateWindow()
+
+    def _open_prompt_picker(self):
+        from .prompt_picker import PromptPickerDialog
+
+        if self._prompt_dialog is None:
+            self._prompt_dialog = PromptPickerDialog(parent=self)
+        self._prompt_dialog.show()
+        self._prompt_dialog.raise_()
+        self._prompt_dialog.activateWindow()
 
     def resizeEvent(self, a0):
         super().resizeEvent(a0)
