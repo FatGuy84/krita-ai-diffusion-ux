@@ -57,6 +57,7 @@ from ..model.model import DocumentModel, ProgressKind, Workspace
 from ..model.properties import Bind, Binding, bind, bind_combo, bind_toggle
 from ..model.region import RootRegion
 from ..model.root import root
+from ..prompt_library import PromptLibrary
 from ..settings import settings
 from ..text import create_mode_label
 from ..style import Styles
@@ -750,6 +751,7 @@ class HistoryWidget(QListWidget):
             menu.addSeparator()
             menu.addAction(_("Save to Eagle") + "\tE", self._save_to_eagle)
             menu.addAction(_("Save as Recipe") + "\tR", self._save_as_recipe)
+            menu.addAction(_("Save as Prompt"), self._save_as_prompt)
             save_action = ensure(menu.addAction(_("Save Image") + "\tCtrl+S", self._save_image))
             if self._model.document.filename == "":
                 tt = _(
@@ -852,6 +854,22 @@ class HistoryWidget(QListWidget):
         for item in items:
             job_id, image_index = self.item_info(item)
             self._model.send_result_to_recipe(job_id, image_index)
+
+    def _save_as_prompt(self):
+        # unlike Recipe (checkpoint + LoRA stack fetched via the Lora Manager server),
+        # this is a plain local prompt snippet with a thumbnail - see prompt_library.py
+        library = PromptLibrary.instance()
+        items = self.selectedItems()
+        for item in items:
+            job_id, image_index = self.item_info(item)
+            job = self._model.jobs.find(job_id)
+            index = image_index or 0
+            if job is None or index >= len(job.results):
+                continue
+            prompt = job.params.prompt
+            negative = job.params.metadata.get("negative_prompt", "")
+            entry = library.add(job.params.name or _("New Prompt"), prompt, negative=negative)
+            library.save_preview(entry.id, job.results[index])
 
     def _toggle_favorite(self):
         items = self.selectedItems()

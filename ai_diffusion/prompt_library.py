@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, field
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
+from .image import Extent, Image
 from .util import client_logger as log
 from .util import user_data_dir
 
@@ -36,10 +37,12 @@ class PromptLibrary(QObject):
 
     _instance: PromptLibrary | None = None
     default_path = user_data_dir / "prompts.json"
+    default_preview_folder = user_data_dir / "prompt_previews"
 
-    def __init__(self, path=None):
+    def __init__(self, path=None, preview_folder=None):
         super().__init__()
         self.path = path or self.default_path
+        self.preview_folder = preview_folder or self.default_preview_folder
         self._entries: dict[str, PromptEntry] = {}
         self.reload()
 
@@ -112,8 +115,34 @@ class PromptLibrary(QObject):
             return False
         del self._entries[id]
         self._save()
+        self.delete_preview(id)
         self.changed.emit()
         return True
+
+    # -- preview thumbnail (one PNG file per entry, named by id - kept out of the
+    # JSON so saving/parsing the library stays cheap even with many entries) --
+
+    def preview_path(self, id: str):
+        return self.preview_folder / f"{id}.png"
+
+    def has_preview(self, id: str) -> bool:
+        return self.preview_path(id).exists()
+
+    def save_preview(self, id: str, image: Image, max_size: int = 160):
+        scaled = Image.scale_to_fit(image, Extent(max_size, max_size))
+        try:
+            self.preview_folder.mkdir(parents=True, exist_ok=True)
+            scaled.save(self.preview_path(id))
+        except Exception as e:
+            log.error(f"Failed to write prompt preview for {id}: {e}")
+
+    def delete_preview(self, id: str):
+        path = self.preview_path(id)
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception as e:
+            log.error(f"Failed to delete prompt preview for {id}: {e}")
 
     def mark_used(self, id: str):
         entry = self._entries.get(id)

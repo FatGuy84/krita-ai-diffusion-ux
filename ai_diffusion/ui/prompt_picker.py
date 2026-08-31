@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QSize, Qt
+from PyQt5.QtGui import QIcon, QPixmap
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -85,6 +86,7 @@ class PromptBrowser(QWidget):
 
         self._list = QListWidget(self)
         self._list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self._list.setIconSize(QSize(32, 32))
         self._list.itemSelectionChanged.connect(self._on_selection_changed)
         self._list.itemDoubleClicked.connect(lambda _item: self._insert_to_prompt())
 
@@ -99,9 +101,17 @@ class PromptBrowser(QWidget):
         self._favorite_check = QCheckBox(_("Favorite"), self)
         self._favorite_check.toggled.connect(self._on_edited)
 
+        self._preview_label = QLabel(self)
+        self._preview_label.setFixedSize(64, 64)
+        self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._preview_label.setStyleSheet(f"border: 1px solid {theme.grey};")
+
         header = QHBoxLayout()
-        header.addWidget(self._title_edit, 1)
-        header.addWidget(self._category_edit, 1)
+        header.addWidget(self._preview_label)
+        fields = QVBoxLayout()
+        fields.addWidget(self._title_edit)
+        fields.addWidget(self._category_edit)
+        header.addLayout(fields, 1)
         header.addWidget(self._favorite_check)
 
         self._text_edit = QPlainTextEdit(self)
@@ -238,6 +248,10 @@ class PromptBrowser(QWidget):
                 item.setData(Qt.ItemDataRole.UserRole, entry.id)
                 preview = entry.text[:200]
                 item.setToolTip(preview)
+                if self._library.has_preview(entry.id):
+                    pixmap = QPixmap(str(self._library.preview_path(entry.id)))
+                    if not pixmap.isNull():
+                        item.setIcon(QIcon(pixmap))
                 self._list.addItem(item)
             self._select_item_by_id(self._current_id)
         finally:
@@ -289,14 +303,31 @@ class PromptBrowser(QWidget):
                 self._text_edit.setPlainText("")
                 self._negative_edit.setPlainText("")
                 self._favorite_check.setChecked(False)
+                self._preview_label.clear()
                 return
             self._title_edit.setText(entry.title)
             self._category_edit.setText(entry.category)
             self._text_edit.setPlainText(entry.text)
             self._negative_edit.setPlainText(entry.negative)
             self._favorite_check.setChecked(entry.favorite)
+            self._update_preview_label(entry.id)
         finally:
             self._loading = False
+
+    def _update_preview_label(self, id: str):
+        if self._library.has_preview(id):
+            pixmap = QPixmap(str(self._library.preview_path(id)))
+            if not pixmap.isNull():
+                self._preview_label.setPixmap(
+                    pixmap.scaled(
+                        64,
+                        64,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
+                return
+        self._preview_label.clear()
 
     def _on_edited(self):
         if self._loading:
