@@ -35,7 +35,13 @@ from ..model.root import root
 from ..settings import settings
 from ..style import Style, Styles, sort_recent_styles
 from . import theme
-from .lora_picker import _extract_video_frame, _ffmpeg_path, _is_video_url, _visible_range, _with_tag
+from .lora_picker import (
+    _extract_video_frame,
+    _ffmpeg_path,
+    _is_video_url,
+    _visible_range,
+    _with_tag,
+)
 
 _ARCH_ANY = "__any__"
 _VIEW_LIST = "list"
@@ -67,7 +73,10 @@ def _favorite_icon(base: QIcon) -> QIcon:
         pixmap.fill(Qt.GlobalColor.transparent)
     badge_size = max(7, size // 2)
     star = _star_pixmap.scaled(
-        badge_size, badge_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        badge_size,
+        badge_size,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
     )
     painter = QPainter(pixmap)
     painter.drawPixmap(pixmap.width() - badge_size, pixmap.height() - badge_size, star)
@@ -215,6 +224,10 @@ class StyleBrowser(QWidget):
 
         Styles.list().changed.connect(self._reload)
         settings.changed.connect(self._on_settings_changed)
+        # setCurrentIndex on _view_combo ran before currentIndexChanged was connected,
+        # so a saved Grid setting never reached the list widget - it stayed in Qt's
+        # default List mode until the user touched the combo. Apply it explicitly.
+        self._set_view_mode()
         self._reload()
         self._load_checkpoint_previews()
 
