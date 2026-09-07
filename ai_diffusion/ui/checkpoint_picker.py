@@ -36,6 +36,7 @@ from ..model.root import root
 from ..settings import settings
 from ..style import Styles
 from . import theme
+from .generate_sets import GenerateSetBar
 from .lora_picker import _extract_video_frame, _ffmpeg_path, _is_video_url, _visible_range, _with_tag
 
 def _with_style_badge(pixmap: QPixmap) -> QPixmap:
@@ -208,6 +209,10 @@ class CheckpointBrowser(QWidget):
         self._create_btn.setEnabled(False)
         self._create_btn.clicked.connect(self._create_styles)
 
+        self._set_bar = GenerateSetBar(
+            "checkpoint_sets", self._selected_keys, self._apply_set, self
+        )
+
         bottom = QHBoxLayout()
         bottom.addWidget(self._selected_label, 1)
         bottom.addWidget(template_label)
@@ -226,6 +231,7 @@ class CheckpointBrowser(QWidget):
         layout.addLayout(row2)
         layout.addWidget(self._grid, 1)
         layout.addWidget(self._status)
+        layout.addWidget(self._set_bar)
         layout.addLayout(bottom)
         self.setLayout(layout)
 
@@ -361,7 +367,10 @@ class CheckpointBrowser(QWidget):
         size = self._preview_size
         if c.sha256 in self._preview_cache:
             return self._preview_cache[c.sha256].scaled(
-                size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                size,
+                size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
             )
         if c.preview_url and _is_video_url(c.preview_url):
             return theme.icon("play").pixmap(size, size)
@@ -415,7 +424,11 @@ class CheckpointBrowser(QWidget):
             if not self._grid.visualItemRect(item).intersects(viewport_rect):
                 continue
             c: LoraInfo = item.data(Qt.ItemDataRole.UserRole)
-            if not c.preview_url or c.sha256 in self._preview_cache or c.sha256 in self._pending_previews:
+            if (
+                not c.preview_url
+                or c.sha256 in self._preview_cache
+                or c.sha256 in self._pending_previews
+            ):
                 continue
             if _is_video_url(c.preview_url) and _ffmpeg_path is None:
                 continue  # no decoder available - play placeholder set in _populate_grid
@@ -505,6 +518,37 @@ class CheckpointBrowser(QWidget):
         if skipped:
             msg += "  " + _("(skipped, not on server: {names})").format(names=", ".join(skipped))
         self._status.setText(msg)
+
+    def _selected_keys(self) -> list[str]:
+        return [i.data(Qt.ItemDataRole.UserRole).name for i in self._grid.selectedItems()]
+
+    def _apply_set(self, names: list[str]):
+        # a set can hold checkpoints the current filters hide - reset them,
+        # otherwise restoring a set would silently drop half of it
+        self._search.clear()
+        self._favorites_only.setChecked(False)
+        self._hide_styled.setChecked(False)
+        self._base_combo.setCurrentIndex(0)
+        self._nsfw_combo.setCurrentIndex(0)
+        self._apply_filter()
+
+        wanted = set(names)
+        self._grid.clearSelection()
+        found = set()
+        first = None
+        for i in range(self._grid.count()):
+            item = self._grid.item(i)
+            name = item.data(Qt.ItemDataRole.UserRole).name
+            if name in wanted:
+                item.setSelected(True)
+                found.add(name)
+                first = first or item
+        if first is not None:
+            self._grid.scrollToItem(first)
+        text = _("Selected {n} checkpoints").format(n=len(found))
+        if missing := len(wanted - found):
+            text += "  " + _("({n} no longer available)").format(n=missing)
+        self._status.setText(text)
 
     def _generate_across(self):
         items = self._grid.selectedItems()

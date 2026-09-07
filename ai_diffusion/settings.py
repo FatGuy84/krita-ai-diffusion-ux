@@ -517,6 +517,13 @@ class Settings(QObject):
     favorite_styles: list[str]
     _favorite_styles = Setting("Favorite Styles", [])
 
+    # named selections for "Generate across": name -> style filenames / checkpoint names
+    style_sets: dict[str, list[str]]
+    _style_sets = Setting("Style Sets", {})
+
+    checkpoint_sets: dict[str, list[str]]
+    _checkpoint_sets = Setting("Checkpoint Sets", {})
+
     history_size: int
     _history_size = Setting(
         _("Active History Size"),

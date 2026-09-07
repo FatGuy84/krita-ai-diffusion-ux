@@ -35,6 +35,7 @@ from ..model.root import root
 from ..settings import settings
 from ..style import Style, Styles, sort_recent_styles
 from . import theme
+from .generate_sets import GenerateSetBar
 from .lora_picker import (
     _extract_video_frame,
     _ffmpeg_path,
@@ -202,7 +203,10 @@ class StyleBrowser(QWidget):
         self._delete_btn.setEnabled(False)
         self._delete_btn.clicked.connect(self._delete_selected)
 
+        self._set_bar = GenerateSetBar("style_sets", self._selected_keys, self._apply_set, self)
+
         bottom = QHBoxLayout()
+        bottom.addWidget(self._set_bar)
         bottom.addStretch(1)
         bottom.addWidget(seed_label)
         bottom.addWidget(self._seed_input)
@@ -537,6 +541,37 @@ class StyleBrowser(QWidget):
             if filename and (style := Styles.list().find(filename)):
                 result.append(style)
         return result
+
+    def _selected_keys(self) -> list[str]:
+        return [s.filename for s in self._selected_styles()]
+
+    def _apply_set(self, filenames: list[str]):
+        # a set can hold styles the current filters hide - reset them, otherwise
+        # restoring a set would silently drop half of it
+        self._search.clear()
+        self._favorites_check.setChecked(False)
+        self._arch_combo.setCurrentIndex(0)
+        self._apply_filter()
+
+        wanted = set(filenames)
+        self._list.clearSelection()
+        found = set()
+        first = None
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            filename = item.data(Qt.ItemDataRole.UserRole)
+            if filename in wanted:
+                item.setSelected(True)
+                found.add(filename)
+                first = first or item
+        if first is not None:
+            self._list.scrollToItem(first)
+        missing = len(wanted - found)
+        text = _("Selected {n} styles").format(n=len(found))
+        if missing:
+            text += "  " + _("({n} no longer available)").format(n=missing)
+        self._status.setText(text)
+        self._update_actions()
 
     def _generate_across(self):
         styles = self._selected_styles()
