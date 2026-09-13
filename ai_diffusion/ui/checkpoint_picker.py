@@ -25,12 +25,16 @@ from PyQt5.QtWidgets import (
 
 from .. import eventloop
 from ..backend import workflow
+from ..backend.client import CheckpointInfo
 from ..backend.lora_manager import (
     LoraInfo,
+    arch_for_base_model,
     fetch_checkpoints_pages,
     fetch_preview_bytes,
     style_family_for_base_model,
 )
+from ..backend.resources import Arch
+from ..files import FileFormat
 from ..localization import translate as _
 from ..model.root import root
 from ..settings import settings
@@ -68,6 +72,12 @@ _SORT_DATE = "date"
 _NSFW_ALL = "all"
 _NSFW_SAFE = "safe"
 _NSFW_HIDE_EXPLICIT = "hide_explicit"
+# ComfyUI loader nodes whose file lists hold the models a style can point at
+_LOADERS = [
+    ("CheckpointLoaderSimple", "ckpt_name", FileFormat.checkpoint),
+    ("UNETLoader", "unet_name", FileFormat.diffusion),
+    ("UnetLoaderGGUF", "unet_name", FileFormat.diffusion),
+]
 
 
 class CheckpointBrowser(QWidget):
@@ -472,14 +482,49 @@ class CheckpointBrowser(QWidget):
             more = f" +{len(items) - 3}" if len(items) > 3 else ""
             self._selected_label.setText(f"{len(items)} {_('selected')}: {names}{more}")
 
+    def _resolve_checkpoints(self, items: list[QListWidgetItem]):
+        """Map selected checkpoints to server file names.
+
+        The client's model list leaves out checkpoints whose base model the server
+        could not classify, and ones added after its model cache was written. Those
+        are looked up in ComfyUI's loader options instead and registered with the
+        architecture Lora Manager reports, which is also returned so a style can
+        store it - that is what keeps it resolvable after a reconnect."""
+        client = root.connection.client_if_connected
+        if client is None:
+            return {}, [c.display_name or c.name for c in self._infos(items)]
+        models = client.models
+        known = {Path(k).stem: k for k in models.checkpoints}
+        loaders: dict[str, tuple[str, FileFormat]] = {}
+        for node, input, format in _LOADERS:
+            if node in models.node_inputs:
+                for name in models.node_inputs.options(node, input):
+                    loaders.setdefault(Path(name).stem, (name, format))
+
+        resolved: dict[str, tuple[str, Arch | None]] = {}
+        skipped: list[str] = []
+        for c in self._infos(items):
+            if (identifier := known.get(c.name)) is not None:
+                resolved[c.name] = (identifier, None)
+            elif (entry := loaders.get(c.name)) is not None:
+                identifier, format = entry
+                arch_name = arch_for_base_model(c.base_model)
+                arch = Arch[arch_name] if arch_name else Arch.from_checkpoint_name(identifier)
+                models.checkpoints[identifier] = CheckpointInfo(identifier, arch, format)
+                resolved[c.name] = (identifier, arch)
+            else:
+                skipped.append(c.display_name or c.name)
+        return resolved, skipped
+
+    @staticmethod
+    def _infos(items: list[QListWidgetItem]) -> list[LoraInfo]:
+        return [i.data(Qt.ItemDataRole.UserRole) for i in items]
+
     def _create_styles(self):
         items = self._grid.selectedItems()
         if not items:
             return
         template = self._template_combo.currentData()
-        client = root.connection.client_if_connected
-        server_ckpts = client.models.checkpoints if client else {}
-        stem_to_id = {Path(k).stem: k for k in server_ckpts}
 
         template_name = template.name if template else _("blank style")
         confirm = QMessageBox.question(
@@ -491,20 +536,19 @@ class CheckpointBrowser(QWidget):
         if confirm != QMessageBox.StandardButton.Yes:
             return
 
+        resolved, skipped = self._resolve_checkpoints(items)
         created = 0
-        skipped: list[str] = []
-        for item in items:
-            c: LoraInfo = item.data(Qt.ItemDataRole.UserRole)
-            identifier = stem_to_id.get(c.name)
-            if identifier is None:
-                skipped.append(c.display_name or c.name)
+        for c in self._infos(items):
+            if c.name not in resolved:
                 continue
+            identifier, arch = resolved[c.name]
             style = Styles.list().create(
                 filename=f"{c.name}.json", checkpoint=identifier, copy_from=template
             )
             # Styles.create copies ALL settings from the template last, including
-            # its checkpoint - so re-apply our selected checkpoint afterwards
+            # its checkpoint and architecture - so re-apply ours afterwards
             style.checkpoints = [identifier]
+            style.architecture = arch or Arch.auto
             name = c.display_name or c.name
             if c.version and c.version.lower() not in name.lower():
                 name = f"{name} ({c.version})"
@@ -517,6 +561,13 @@ class CheckpointBrowser(QWidget):
         msg = _("Created {n} styles").format(n=created)
         if skipped:
             msg += "  " + _("(skipped, not on server: {names})").format(names=", ".join(skipped))
+            QMessageBox.warning(
+                self,
+                _("Create Styles from Checkpoints"),
+                _("These checkpoints were not found on the ComfyUI server, no style was created:")
+                + "\n\n"
+                + "\n".join(skipped),
+            )
         self._status.setText(msg)
 
     def _selected_keys(self) -> list[str]:
@@ -555,19 +606,8 @@ class CheckpointBrowser(QWidget):
         model = root.active_model
         if not items or model is None:
             return
-        client = root.connection.client_if_connected
-        server_ckpts = client.models.checkpoints if client else {}
-        stem_to_id = {Path(k).stem: k for k in server_ckpts}
-
-        ids: list[str] = []
-        skipped: list[str] = []
-        for item in items:
-            c: LoraInfo = item.data(Qt.ItemDataRole.UserRole)
-            identifier = stem_to_id.get(c.name)
-            if identifier is not None:
-                ids.append(identifier)
-            else:
-                skipped.append(c.display_name or c.name)
+        resolved, skipped = self._resolve_checkpoints(items)
+        ids = [resolved[c.name][0] for c in self._infos(items) if c.name in resolved]
         if not ids:
             self._status.setText(_("None of the selected checkpoints are on the server"))
             return

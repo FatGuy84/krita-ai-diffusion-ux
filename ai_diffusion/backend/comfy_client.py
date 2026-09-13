@@ -567,6 +567,28 @@ class ComfyClient(Client):
         else:
             log.info("GGUF support: node is not installed.")
 
+        # Left out above: models the server could not classify (base model "unknown")
+        # and ones added after the model cache was written. A style that names one of
+        # them with an explicit architecture - e.g. created from the Lora Manager
+        # checkpoint browser, which knows the base model - still has to resolve.
+        on_server = {
+            name: format
+            for node, input, format in (
+                ("CheckpointLoaderSimple", "ckpt_name", FileFormat.checkpoint),
+                ("UNETLoader", "unet_name", FileFormat.diffusion),
+            )
+            if node in nodes
+            for name in nodes.options(node, input)
+        }
+        for style in Styles.list():
+            if style.architecture is Arch.auto:
+                continue
+            for name in style.checkpoints:
+                if name not in models.checkpoints and name in on_server:
+                    models.checkpoints[name] = CheckpointInfo(
+                        name, style.architecture, on_server[name]
+                    )
+
     async def _transfer_result_image(self, id: str):
         try:
             data = await self._requests.download(f"{self.url}/api/etn/image/{id}", timeout=300)
