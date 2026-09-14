@@ -135,9 +135,13 @@ With Lora Manager available you get:
   re-querying the server. A selection you've made survives the list
   reloading as more LoRAs stream in or filters change, instead of silently
   dropping and forcing you to re-find what you picked.
-* **Reload list** (fast, re-fetches from Lora Manager) and **Scan server**
-  (slower full ComfyUI model rescan, with a progress state) buttons — so you
-  can pick up newly added LoRA files without leaving the browser
+* **Reload list** (re-fetches everything from Lora Manager) and **Scan server**
+  (picks up newly added LoRA files without leaving the browser). The scan only
+  fetches what is new: ComfyUI re-reads its file lists without inspecting any
+  model, and Lora Manager's list is read newest first until nothing new turns
+  up and the count matches — 1 request when nothing changed instead of ~100
+  for a 10k library. A new file with an old date (e.g. copied) is still found;
+  if files were removed it falls back to the full reload.
 * **Insert position**: choose whether the LoRA goes at the end of the prompt,
   the start, or at your cursor
 * **Copy** button next to *Add to Prompt* — puts the same tags on the
@@ -291,8 +295,14 @@ one style per checkpoint in a single step**. Pick an existing style as a
 **template** and every new style copies its settings (sampler, steps, etc.),
 swapping in the checkpoint. Names come from the checkpoint's title (with its
 version), and the Base Model Family is filled in automatically from Lora
-Manager's metadata. Checkpoints not present on the server are skipped with a
-note rather than creating broken styles. A green ✓ badge marks checkpoints
+Manager's metadata. Checkpoints the plugin's model list leaves out — added
+after connecting, or ones the server couldn't classify (base model "unknown")
+— are still found via ComfyUI's loader file lists, and the style stores the
+architecture Lora Manager reports so it keeps working after a reconnect. A
+**Scan server** button looks for new checkpoint files (checkpoints only, no
+full model re-inspection), and if a checkpoint still isn't found, a dialog
+names it and offers **Scan server and retry** for just those — Generate
+across keeps its seed on the retry. A green ✓ badge marks checkpoints
 that already have a style, and a **"Hide checkpoints with a style"** filter
 narrows the browser down to ones that don't yet. Same **content filter**
 (All / Safe Only / Hide Explicit) as the LoRA browser.
@@ -310,7 +320,9 @@ checkpoint/LoRA/etc. on every Krita startup, which is slow with large model
 libraries (700+ entries easily takes a while). This fork caches the
 discovered model list to disk per server URL, so subsequent startups load
 instantly from cache. Click the Refresh button in the connection settings
-after installing new models to force a re-scan.
+after installing new models to force a full re-scan — or use **Scan server**
+in the LoRA or Checkpoints browser, which only re-reads the file lists and is
+much faster.
 
 ### History & export
 
