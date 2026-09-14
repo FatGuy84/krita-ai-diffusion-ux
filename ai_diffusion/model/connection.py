@@ -163,14 +163,16 @@ class Connection(QObject, ObservableProperties):
     def cancel(self, job_ids: Iterable[str]):
         eventloop.run(self.client.cancel(job_ids))
 
-    def refresh(self, checkpoints_only=False):
+    def refresh(self, quick=False):
+        # quick: only re-read the server's model file lists (browser "Scan server"),
+        # without inspecting every model file or rechecking resources
         async def _refresh():
             # models_changed must fire even on failure - callers like the LoRA
             # browser's "Scan server" button wait for it to re-enable themselves,
             # and a network hiccup or a slow ComfyUI must not leave them stuck.
             try:
-                if checkpoints_only:
-                    await self.client.refresh_checkpoints()
+                if quick:
+                    await self.client.refresh_file_lists()
                 else:
                     await self.client.refresh()
                     self.missing_resources = self.client.missing_resources

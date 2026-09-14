@@ -36,6 +36,7 @@ from ..backend.lora_manager import (
     arch_for_base_model,
     fetch_commercial_use,
     fetch_loras_pages,
+    fetch_new_loras,
     fetch_preview_bytes,
     load_cached_loras,
     save_lora_cache,
@@ -461,9 +462,10 @@ class LoraBrowser(QWidget):
         self._load_loras(force_refresh=True)
 
     def _rescan_server(self):
-        # tell ComfyUI to rescan its model folders so newly added LoRA files are
-        # picked up (same as the "Look for new LoRA files" button in style settings).
-        # Slow (full model rescan), so kept separate from the fast list reload.
+        # Look for LoRA files added since the list was loaded. ComfyUI only re-reads
+        # its file lists (no model inspection - LoRAs don't need it), and Lora Manager
+        # is asked for its newest entries until nothing new turns up, instead of
+        # reloading every LoRA. "Reload list" stays the full reload.
         if root.connection.client_if_connected is None:
             self._status.setText(_("Not connected to ComfyUI"))
             return
@@ -471,15 +473,40 @@ class LoraBrowser(QWidget):
         self._status.setText(_("Scanning server for new LoRA files…"))
         # connection emits models_changed when the async refresh finishes
         root.connection.models_changed.connect(self._on_server_scanned)
-        root.connection.refresh()
+        root.connection.refresh(quick=True)
 
     def _on_server_scanned(self):
         try:
             root.connection.models_changed.disconnect(self._on_server_scanned)
         except (TypeError, RuntimeError):
             pass
-        self._rescan_btn.setEnabled(True)
-        self._load_loras(force_refresh=True)  # reload the browser list once the scan is done
+        client = root.connection.client_if_connected
+        if client is None or self._loading:  # a full load already brings in new files
+            self._rescan_btn.setEnabled(True)
+            return
+        if not self._all_loras:
+            self._rescan_btn.setEnabled(True)
+            self._load_loras(force_refresh=True)
+            return
+        eventloop.run(self._merge_new_loras(client))
+
+    async def _merge_new_loras(self, client):
+        try:
+            new = await fetch_new_loras(client._requests, client.url, self._all_loras)
+        finally:
+            self._rescan_btn.setEnabled(True)
+        if new is None:  # files were removed or the answer was unexpected
+            self._load_loras(force_refresh=True)
+            return
+        if new:
+            self._all_loras = new + self._all_loras
+            save_lora_cache(client.url, self._all_loras)
+            self._rebuild_filters()
+            self._apply_filter()
+        self._status.setText(
+            _("{n} new LoRAs").format(n=len(new))
+            + f" - {len(self._filtered)} / {len(self._all_loras)} LoRAs"
+        )
 
     def shutdown(self):
         # drop the pending scan callback so it doesn't fire on a destroyed browser.

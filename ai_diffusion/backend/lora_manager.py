@@ -247,6 +247,49 @@ async def fetch_loras_pages(requests: RequestManager, base_url: str):
         log.warning(f"Could not fetch LoRA list: {e}")
 
 
+async def fetch_new_loras(
+    requests: RequestManager, base_url: str, known: list[LoraInfo]
+) -> list[LoraInfo] | None:
+    """The LoRAs Lora Manager lists that `known` doesn't have yet.
+
+    Pages through the list newest first and stops at the first page with nothing
+    new once the counts add up, instead of reloading all ~10k entries. The date
+    alone can't be trusted - a copied file keeps its old modification time - so
+    the server's total has to match too. Returns None when an incremental update
+    isn't reliable (files were removed, unexpected answer): reload fully then."""
+    base = base_url.rstrip("/")
+    known_keys = {lora.file_path or lora.name for lora in known}
+    new: list[LoraInfo] = []
+    total = -1
+    try:
+        page, page_size = 1, 200
+        while True:
+            data = await requests.get(
+                f"{base}/api/lm/loras/list?page={page}&page_size={page_size}&sort_by=date:desc",
+                timeout=15.0,
+            )
+            if isinstance(data, (bytes, bytearray)):
+                data = json.loads(data)
+            if not isinstance(data, dict) or not isinstance(data.get("total"), int):
+                return None
+            total = data["total"]
+            items = data.get("items") or []
+            batch = [LoraInfo.from_api(item, base) for item in items]
+            fresh = [lora for lora in batch if (lora.file_path or lora.name) not in known_keys]
+            new.extend(fresh)
+            if not fresh and len(known) + len(new) == total:
+                return new
+            if not fresh and len(known) + len(new) > total:
+                return None  # files were removed - paging further can't fix the count
+            if not items or len(items) < data.get("page_size", page_size):
+                break
+            page += 1
+    except Exception as e:
+        log.warning(f"Could not fetch new LoRAs: {e}")
+        return None
+    return new if len(known) + len(new) == total else None
+
+
 # Lora Manager base_model string -> Krita Style "base_model_family" label.
 # Longer/more specific keys before shorter overlapping ones.
 _STYLE_FAMILY_MAP = [

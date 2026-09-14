@@ -559,7 +559,7 @@ class CheckpointBrowser(QWidget):
         self._status.setText(_("Scanning server for new checkpoint files…"))
         # connection emits models_changed when the async refresh finishes
         root.connection.models_changed.connect(self._on_server_scanned)
-        root.connection.refresh(checkpoints_only=True)
+        root.connection.refresh(quick=True)
 
     def _on_server_scanned(self):
         try:

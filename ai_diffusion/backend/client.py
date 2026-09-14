@@ -419,7 +419,7 @@ class Client(ABC):
     async def refresh(self):
         pass
 
-    async def refresh_checkpoints(self):
+    async def refresh_file_lists(self):
         await self.refresh()
 
     async def translate(self, text: str, lang: str) -> str:

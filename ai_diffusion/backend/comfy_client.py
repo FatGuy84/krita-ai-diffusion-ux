@@ -300,12 +300,12 @@ class ComfyClient(Client):
         async for __ in self.discover_models(refresh=True):
             pass
 
-    async def refresh_checkpoints(self):
-        # Fast rescan for the checkpoint browser: ComfyUI's current file lists, but
-        # the base models already inspected are reused from the model cache instead
-        # of reading every file again, and other resources are not rechecked. New
-        # files stay uninspected - the browser registers them with the architecture
-        # Lora Manager reports.
+    async def refresh_file_lists(self):
+        # Fast rescan for the LoRA and checkpoint browsers: ComfyUI's current file
+        # lists, but the base models already inspected are reused from the model cache
+        # instead of reading every file again, and other resources are not rechecked.
+        # New checkpoints stay uninspected - the checkpoint browser registers them
+        # with the architecture Lora Manager reports.
         nodes = ComfyObjectInfo(await self._get("object_info"))
         self.models.node_inputs = nodes
         cached_checkpoints, cached_diffusion = self._load_model_cache()
