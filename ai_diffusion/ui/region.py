@@ -639,10 +639,11 @@ class ActiveRegionWidget(QFrame):
         )
         menu.addSeparator()
         menu.addAction(_("Describe the image"), partial(self._enhance, EnhanceTask.describe))
-        menu.addAction(
+        self._describe_selection_action = menu.addAction(
             _("Describe current selection"),
             partial(self._enhance, EnhanceTask.describe, "", False, True),
         )
+        self._describe_selection_action.setVisible(False)
         menu.addSeparator()
         menu.addAction(_("Modify with instruction..."), self._ask_instruction)
         menu.addAction(_("Prompt batch for generation..."), self._open_prompt_batch)
@@ -653,8 +654,11 @@ class ActiveRegionWidget(QFrame):
         return menu
 
     def _update_enhance_selection_visibility(self):
-        # only shown when there's something to send instead of the whole prompt
+        # only shown when there's something to send instead of the whole prompt/canvas
         self._enhance_selection_action.setVisible(self.positive.textCursor().hasSelection())
+        model = root.active_model
+        has_canvas_selection = model is not None and model.document.selection_bounds is not None
+        self._describe_selection_action.setVisible(has_canvas_selection)
 
     def _update_enhance_tooltip(self):
         model = settings.ollama_model or _("not configured")
