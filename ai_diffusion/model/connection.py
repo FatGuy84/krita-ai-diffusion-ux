@@ -163,14 +163,17 @@ class Connection(QObject, ObservableProperties):
     def cancel(self, job_ids: Iterable[str]):
         eventloop.run(self.client.cancel(job_ids))
 
-    def refresh(self):
+    def refresh(self, checkpoints_only=False):
         async def _refresh():
             # models_changed must fire even on failure - callers like the LoRA
             # browser's "Scan server" button wait for it to re-enable themselves,
             # and a network hiccup or a slow ComfyUI must not leave them stuck.
             try:
-                await self.client.refresh()
-                self.missing_resources = self.client.missing_resources
+                if checkpoints_only:
+                    await self.client.refresh_checkpoints()
+                else:
+                    await self.client.refresh()
+                    self.missing_resources = self.client.missing_resources
             except Exception as e:
                 util.log_error(e)
             finally:

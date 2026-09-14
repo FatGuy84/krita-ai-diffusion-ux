@@ -704,3 +704,7 @@ class StylePickerDialog(QDialog):
         """Point the style list at the style that is active now, for a reopen."""
         self.styles._current = style
         self.styles._reload()
+
+    def closeEvent(self, a0):
+        self.checkpoints.shutdown()
+        super().closeEvent(a0)

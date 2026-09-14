@@ -419,6 +419,9 @@ class Client(ABC):
     async def refresh(self):
         pass
 
+    async def refresh_checkpoints(self):
+        await self.refresh()
+
     async def translate(self, text: str, lang: str) -> str:
         return text
 

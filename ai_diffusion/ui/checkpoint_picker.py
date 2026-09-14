@@ -110,9 +110,20 @@ class CheckpointBrowser(QWidget):
         self._refresh_btn.setToolTip(_("Reload the checkpoint list from Lora Manager"))
         self._refresh_btn.clicked.connect(self._load)
 
+        self._rescan_btn = QToolButton(self)
+        self._rescan_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._rescan_btn.setIcon(theme.icon("comfyui"))
+        self._rescan_btn.setText(_("Scan server"))
+        self._rescan_btn.setToolTip(
+            _("Look for new checkpoint files on the ComfyUI server (checkpoints only)")
+        )
+        self._rescan_btn.clicked.connect(lambda: self._rescan_server())
+        self._after_scan = None
+
         row1 = QHBoxLayout()
         row1.addWidget(self._search, 1)
         row1.addWidget(self._refresh_btn)
+        row1.addWidget(self._rescan_btn)
 
         # ── row 2: filters ──
         base_label = QLabel(_("Base Model:"), self)
@@ -482,8 +493,8 @@ class CheckpointBrowser(QWidget):
             more = f" +{len(items) - 3}" if len(items) > 3 else ""
             self._selected_label.setText(f"{len(items)} {_('selected')}: {names}{more}")
 
-    def _resolve_checkpoints(self, items: list[QListWidgetItem]):
-        """Map selected checkpoints to server file names.
+    def _resolve_checkpoints(self, infos: list[LoraInfo]):
+        """Map checkpoints to server file names.
 
         The client's model list leaves out checkpoints whose base model the server
         could not classify, and ones added after its model cache was written. Those
@@ -492,7 +503,7 @@ class CheckpointBrowser(QWidget):
         store it - that is what keeps it resolvable after a reconnect."""
         client = root.connection.client_if_connected
         if client is None:
-            return {}, [c.display_name or c.name for c in self._infos(items)]
+            return {}, list(infos)
         models = client.models
         known = {Path(k).stem: k for k in models.checkpoints}
         loaders: dict[str, tuple[str, FileFormat]] = {}
@@ -502,8 +513,8 @@ class CheckpointBrowser(QWidget):
                     loaders.setdefault(Path(name).stem, (name, format))
 
         resolved: dict[str, tuple[str, Arch | None]] = {}
-        skipped: list[str] = []
-        for c in self._infos(items):
+        skipped: list[LoraInfo] = []
+        for c in infos:
             if (identifier := known.get(c.name)) is not None:
                 resolved[c.name] = (identifier, None)
             elif (entry := loaders.get(c.name)) is not None:
@@ -513,12 +524,65 @@ class CheckpointBrowser(QWidget):
                 models.checkpoints[identifier] = CheckpointInfo(identifier, arch, format)
                 resolved[c.name] = (identifier, arch)
             else:
-                skipped.append(c.display_name or c.name)
+                skipped.append(c)
         return resolved, skipped
 
     @staticmethod
     def _infos(items: list[QListWidgetItem]) -> list[LoraInfo]:
         return [i.data(Qt.ItemDataRole.UserRole) for i in items]
+
+    def _offer_scan(self, title: str, skipped: list[LoraInfo], retry):
+        """Tell which checkpoints the server doesn't list, and offer a checkpoint scan
+        that retries just those - the usual cause is a file added after connecting."""
+        names = "\n".join(c.display_name or c.name for c in skipped)
+        box = QMessageBox(
+            QMessageBox.Icon.Warning,
+            title,
+            _("These checkpoints were not found on the ComfyUI server:") + f"\n\n{names}",
+            QMessageBox.StandardButton.Close,
+            self,
+        )
+        scan = box.addButton(_("Scan server and retry"), QMessageBox.ButtonRole.AcceptRole)
+        box.exec()
+        if box.clickedButton() is scan:
+            self._rescan_server(then=lambda: retry(skipped))
+
+    def _rescan_server(self, then=None):
+        if root.connection.client_if_connected is None:
+            self._status.setText(_("Not connected to ComfyUI"))
+            return
+        if not self._rescan_btn.isEnabled():  # a scan is already running
+            self._status.setText(_("A server scan is already running, try again when it is done"))
+            return
+        self._after_scan = then
+        self._rescan_btn.setEnabled(False)
+        self._status.setText(_("Scanning server for new checkpoint files…"))
+        # connection emits models_changed when the async refresh finishes
+        root.connection.models_changed.connect(self._on_server_scanned)
+        root.connection.refresh(checkpoints_only=True)
+
+    def _on_server_scanned(self):
+        try:
+            root.connection.models_changed.disconnect(self._on_server_scanned)
+        except (TypeError, RuntimeError):
+            pass
+        self._rescan_btn.setEnabled(True)
+        after, self._after_scan = self._after_scan, None
+        if after is not None:
+            after()
+        else:
+            self._load()  # also refreshes the "has a style" badges
+
+    def shutdown(self):
+        # drop the pending scan callback so it doesn't fire on a closed browser. The
+        # dialog is kept for a reopen, so leave the button usable - the scan itself
+        # still finishes and updates the model list.
+        try:
+            root.connection.models_changed.disconnect(self._on_server_scanned)
+        except (TypeError, RuntimeError):
+            pass
+        self._after_scan = None
+        self._rescan_btn.setEnabled(True)
 
     def _create_styles(self):
         items = self._grid.selectedItems()
@@ -535,10 +599,12 @@ class CheckpointBrowser(QWidget):
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
+        self._create_styles_for(self._infos(items), template)
 
-        resolved, skipped = self._resolve_checkpoints(items)
+    def _create_styles_for(self, infos: list[LoraInfo], template):
+        resolved, skipped = self._resolve_checkpoints(infos)
         created = 0
-        for c in self._infos(items):
+        for c in infos:
             if c.name not in resolved:
                 continue
             identifier, arch = resolved[c.name]
@@ -557,18 +623,16 @@ class CheckpointBrowser(QWidget):
             style.save()
             created += 1
 
-        self.styles_created.emit(created)
-        msg = _("Created {n} styles").format(n=created)
+        if created:
+            self.styles_created.emit(created)
+            self._apply_filter()  # "has a style" badges
+        self._status.setText(_("Created {n} styles").format(n=created))
         if skipped:
-            msg += "  " + _("(skipped, not on server: {names})").format(names=", ".join(skipped))
-            QMessageBox.warning(
-                self,
+            self._offer_scan(
                 _("Create Styles from Checkpoints"),
-                _("These checkpoints were not found on the ComfyUI server, no style was created:")
-                + "\n\n"
-                + "\n".join(skipped),
+                skipped,
+                lambda retry: self._create_styles_for(retry, template),
             )
-        self._status.setText(msg)
 
     def _selected_keys(self) -> list[str]:
         return [i.data(Qt.ItemDataRole.UserRole).name for i in self._grid.selectedItems()]
@@ -603,21 +667,31 @@ class CheckpointBrowser(QWidget):
 
     def _generate_across(self):
         items = self._grid.selectedItems()
+        if items:
+            self._generate_across_for(self._infos(items))
+
+    def _generate_across_for(self, infos: list[LoraInfo], seed: int | None = None):
         model = root.active_model
-        if not items or model is None:
+        if model is None:
             return
-        resolved, skipped = self._resolve_checkpoints(items)
-        ids = [resolved[c.name][0] for c in self._infos(items) if c.name in resolved]
+        if seed is None:
+            # -1 in the seed box means "pick a random one and reuse it for all"
+            seed = self._seed_input.value()
+            if seed < 0:
+                seed = workflow.generate_seed()
+        resolved, skipped = self._resolve_checkpoints(infos)
+        ids = [resolved[c.name][0] for c in infos if c.name in resolved]
+        if skipped:
+            # a retry after the scan keeps the seed, so all runs stay comparable
+            self._offer_scan(
+                _("Generate across"), skipped, lambda retry: self._generate_across_for(retry, seed)
+            )
         if not ids:
             self._status.setText(_("None of the selected checkpoints are on the server"))
             return
 
         style = model.style
         original_ckpts = list(style.checkpoints)
-        # -1 in the seed box means "pick a random one and reuse it for all"
-        seed = self._seed_input.value()
-        if seed < 0:
-            seed = workflow.generate_seed()
 
         def set_checkpoint(identifier):
             return lambda: setattr(style, "checkpoints", [identifier])
@@ -628,7 +702,4 @@ class CheckpointBrowser(QWidget):
             restore=lambda: setattr(style, "checkpoints", original_ckpts),
         )
 
-        msg = _("Queued {n} checkpoints (seed {s})").format(n=len(ids), s=seed)
-        if skipped:
-            msg += "  " + _("(skipped, not on server: {names})").format(names=", ".join(skipped))
-        self._status.setText(msg)
+        self._status.setText(_("Queued {n} checkpoints (seed {s})").format(n=len(ids), s=seed))
