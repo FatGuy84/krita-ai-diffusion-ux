@@ -105,10 +105,15 @@ class InactiveRegionWidget(QFrame):
 describe_max_extent = Extent(1024, 1024)
 
 
-def _canvas_image(model) -> str:
-    """The current canvas as base64 PNG, cropped to the selection if there is one."""
+def _canvas_image(model, require_selection: bool = False) -> str | None:
+    """The current canvas as base64 PNG, cropped to the selection if there is one.
+    With require_selection, returns None instead of silently falling back to the
+    whole canvas when nothing is selected."""
     doc = model.document
-    image = doc.get_image(doc.selection_bounds)
+    bounds = doc.selection_bounds
+    if require_selection and bounds is None:
+        return None
+    image = doc.get_image(bounds)
     if image.extent.width > describe_max_extent.width or (
         image.extent.height > describe_max_extent.height
     ):
@@ -634,6 +639,10 @@ class ActiveRegionWidget(QFrame):
         )
         menu.addSeparator()
         menu.addAction(_("Describe the image"), partial(self._enhance, EnhanceTask.describe))
+        menu.addAction(
+            _("Describe current selection"),
+            partial(self._enhance, EnhanceTask.describe, "", False, True),
+        )
         menu.addSeparator()
         menu.addAction(_("Modify with instruction..."), self._ask_instruction)
         menu.addAction(_("Prompt batch for generation..."), self._open_prompt_batch)
@@ -720,7 +729,13 @@ class ActiveRegionWidget(QFrame):
             text += " - " + _("loading model")
         theme.set_text_clipped(self._enhance_progress, text)
 
-    def _enhance(self, task: EnhanceTask, instruction: str = "", use_selection: bool = False):
+    def _enhance(
+        self,
+        task: EnhanceTask,
+        instruction: str = "",
+        use_selection: bool = False,
+        canvas_selection: bool = False,
+    ):
         if self._enhance_running:
             return
         if not settings.ollama_model:
@@ -728,7 +743,7 @@ class ActiveRegionWidget(QFrame):
                 _("No language model selected. Configure one in Settings -> Prompt AI.")
             )
             return
-        eventloop.run(self._run_enhance(task, instruction, use_selection))
+        eventloop.run(self._run_enhance(task, instruction, use_selection, canvas_selection))
 
     def _report_error(self, message: str):
         if model := root.active_model:
@@ -737,11 +752,18 @@ class ActiveRegionWidget(QFrame):
             log.error(message)
 
     async def _run_enhance(
-        self, task: EnhanceTask, instruction: str = "", use_selection: bool = False
+        self,
+        task: EnhanceTask,
+        instruction: str = "",
+        use_selection: bool = False,
+        canvas_selection: bool = False,
     ):
         region = self.region
         model = root.active_model
         if region is None or model is None:
+            return
+        if canvas_selection and model.document.selection_bounds is None:
+            self._report_error(_("No selection on the canvas"))
             return
 
         original = region.positive
@@ -769,7 +791,9 @@ class ActiveRegionWidget(QFrame):
             protected = ollama.protect(source)
             count = max(2, settings.ollama_variation_count)
             request = ollama.build_prompt(task, protected.text, count, instruction)
-            images = [_canvas_image(model)] if task is EnhanceTask.describe else None
+            images = (
+                [_canvas_image(model, canvas_selection)] if task is EnhanceTask.describe else None
+            )
 
             if settings.ollama_free_comfy_vram:
                 if client := root.connection.client_if_connected:
