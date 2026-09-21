@@ -201,6 +201,10 @@ class AnimadexBrowser(QWidget):
         self._arch_hint = QLabel(self)
         self._arch_hint.setWordWrap(True)
         self._arch_hint.setStyleSheet(f"color: {theme.yellow};")
+        self._net_hint = QLabel(self)
+        self._net_hint.setWordWrap(True)
+        self._net_hint.setStyleSheet(f"color: {theme.yellow};")
+        self._net_hint.setVisible(False)
 
         # ── bottom row ──
         self._selected_label = QLabel(_("Nothing selected"), self)
@@ -237,6 +241,7 @@ class AnimadexBrowser(QWidget):
         layout.addWidget(self._grid, 1)
         layout.addWidget(self._status)
         layout.addWidget(self._arch_hint)
+        layout.addWidget(self._net_hint)
         layout.addLayout(bottom)
         self.setLayout(layout)
 
@@ -514,7 +519,12 @@ class AnimadexBrowser(QWidget):
         self._pending.discard(entry.thumb_url)
         pixmap = QPixmap()
         if not data or not pixmap.loadFromData(data):
+            host = animadex.host_of(entry.thumb_url)
+            if host in animadex.unreachable_hosts and not self._net_hint.isVisible():
+                self._net_hint.setText(animadex.connection_hint(entry.thumb_url))
+                self._net_hint.setVisible(True)
             return  # missing, or no WebP decoder in this Qt build - keep the blank tile
+        self._net_hint.setVisible(False)
         self._thumbs[entry.thumb_url] = pixmap
         for i in _visible_range(self._grid):
             item = self._grid.item(i)

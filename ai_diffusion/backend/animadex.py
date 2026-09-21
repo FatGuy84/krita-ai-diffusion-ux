@@ -5,12 +5,13 @@ import json
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from .. import __version__ as plugin_version
 from .. import util
+from ..localization import translate as _
 from ..util import client_logger as log
-from .network import RequestManager
+from .network import NetworkError, RequestManager
 
 # AnimaDex catalogues characters and artists known to the ANIMA model, each with the
 # danbooru-style trigger phrase that reproduces them. Endpoints follow the Flask app
@@ -266,15 +267,47 @@ async def fetch_facet_values(
         return Facet(key=facet, label=facet)
 
 
+# Hosts where connections died before any HTTP response. Images and the export
+# live on a separate host (blobs.animadex.net), which antivirus web filters block
+# by its TLS server name while letting animadex.net itself through - browsers still
+# get there because they hide the name with Encrypted Client Hello, Qt can't.
+unreachable_hosts: set[str] = set()
+
+
+def host_of(url: str) -> str:
+    return urlsplit(url).hostname or ""
+
+
+def is_connection_failure(e: Exception) -> bool:
+    """True if no HTTP response came back at all (refused, reset, TLS failure)."""
+    return isinstance(e, NetworkError) and not e.status
+
+
+def connection_hint(url: str) -> str:
+    host = host_of(url)
+    return _(
+        "{host} closed the connection before answering. This usually means a firewall or"
+        " antivirus web filter (e.g. Bitdefender Online Threat Prevention) blocks it for"
+        " Krita while the browser gets through - add {host} to its exceptions."
+    ).format(host=host)
+
+
 async def fetch_thumbnail(url: str) -> bytes | None:
     """Preview image bytes (served from a separate blob host). None on error."""
     if not url:
         return None
     try:
         result = await requests().download(url, timeout=8.0)
+        unreachable_hosts.discard(host_of(url))
         return bytes(result) if result else None
     except Exception as e:
-        log.warning(f"Could not fetch animadex image {url}: {e}")
+        if is_connection_failure(e):
+            host = host_of(url)
+            if host not in unreachable_hosts:  # once, not for every tile
+                unreachable_hosts.add(host)
+                log.warning(f"Could not fetch animadex image {url}: {e} - {connection_hint(url)}")
+        else:
+            log.warning(f"Could not fetch animadex image {url}: {e}")
         return None
 
 

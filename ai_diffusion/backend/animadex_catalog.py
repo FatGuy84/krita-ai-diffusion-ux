@@ -535,7 +535,7 @@ class Catalog:
         except NetworkError as e:
             if not token and e.status in (401, 403, 404, 410):
                 raise ImportFailed("token", "Saved export links expired, a new token is needed.")
-            raise ImportFailed("network", f"Could not download the catalogue index: {e}")
+            raise ImportFailed("network", _network_message(e, index_url, "the catalogue index"))
 
         summary = ImportSummary()
         new_versions: dict[str, dict[str, int]] = {}
@@ -567,7 +567,7 @@ class Catalog:
                         raise ImportFailed(
                             "token", "Saved export links expired, a new token is needed."
                         )
-                    raise ImportFailed("network", f"Could not download {mode}: {e}")
+                    raise ImportFailed("network", _network_message(e, str(url), mode))
                 text = bytes(data).decode("utf-8-sig")
                 if not parse_csv(text, mode):
                     raise ImportFailed("format", f"The {mode} catalogue is empty or unreadable.")
@@ -605,6 +605,14 @@ class Catalog:
         if cls._instance is None:
             cls._instance = Catalog()
         return cls._instance
+
+
+def _network_message(e: Exception, url: str, what: str) -> str:
+    log.warning(f"AnimaDex import: could not download {url}: {e}")
+    message = f"Could not download {what}: {e}"
+    if animadex.is_connection_failure(e):
+        message += "\n\n" + animadex.connection_hint(url)
+    return message
 
 
 async def _download_json(url: str) -> dict:
