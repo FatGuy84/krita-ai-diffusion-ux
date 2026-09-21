@@ -182,6 +182,39 @@ It also works the other way round: right-click a result in the history →
 LoRA stack straight to Lora Manager as a new recipe, so a generation you
 like becomes reusable without retyping anything.
 
+### AnimaDex Browser
+
+Click the **AnimaDex** button in the prompt toolbar to browse
+[AnimaDex](https://animadex.net) ([source](https://github.com/zetaneko/AnimaDex)) —
+a catalogue of ~36k anime characters and artists the Anima model knows,
+each with a sample render and the trigger phrase that reproduces it.
+
+* Search by name, series or tag (comma-separated terms must all match),
+  filter by series, gender, hair colour/length, eye colour, or artwork score
+  for artists
+* **Add to Prompt** inserts the trigger (`hatsune miku, vocaloid`); tick
+  **+ tags** to also insert the character's appearance tags. Multi-select
+  inserts several at once
+* **Save as Wildcard…** writes the triggers of the current search into a
+  wildcard file (e.g. every Touhou character as `__animadex/touhou__`), ready
+  for sequential wildcards and Cartesian batches
+* Right-click: copy the trigger, open the danbooru page, or open a character's
+  Anima LoRA on CivitAI
+* A warning shows when the current model isn't Anima or Illustrious, since
+  the triggers are danbooru tags
+
+**Offline catalogue.** Without setup the browser reads the live site, 36
+results at a time. For instant search, click **Import…** and paste an export
+token from animadex.net → Account → *Offline dataset export*. Only the
+catalogue metadata is downloaded (a few MB); thumbnails are fetched as you
+browse and cached on disk, instead of the multi-GB image set. The token is
+used once and not stored — **Update** later fetches only what changed.
+LoRA links, votes and artist categories exist only on the live site; the
+**Source** dropdown switches between the two.
+
+Settings → Integrations → AnimaDex hides the button or points it at a
+self-hosted instance (e.g. `127.0.0.1:5000`).
+
 ### CivitAI Browser
 
 The **CivitAI** tab — in the LoRA browser for LoRAs, in the style dialog for

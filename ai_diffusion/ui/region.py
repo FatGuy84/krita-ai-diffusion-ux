@@ -230,6 +230,16 @@ class ActiveRegionWidget(QFrame):
         self._wildcard_browse_button.clicked.connect(self._open_wildcard_picker)
         self._wildcard_dialog = None
 
+        self._animadex_button = QToolButton(self)
+        self._animadex_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._animadex_button.setIcon(theme.icon("sd-version-anima"))
+        self._animadex_button.setText(_("AnimaDex"))
+        self._animadex_button.setToolTip(_("Browse AnimaDex characters and artists for Anima"))
+        self._animadex_button.setAutoRaise(True)
+        self._animadex_button.clicked.connect(self._open_animadex_picker)
+        self._animadex_button.setVisible(settings.animadex_enabled)
+        self._animadex_dialog = None
+
         self._prompt_browse_button = QToolButton(self)
         self._prompt_browse_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._prompt_browse_button.setIcon(theme.icon("region-prompt"))
@@ -273,6 +283,7 @@ class ActiveRegionWidget(QFrame):
         buttons_layout.setSpacing(2)
         buttons_layout.addWidget(self._prompt_browse_button)
         buttons_layout.addWidget(self._wildcard_browse_button)
+        buttons_layout.addWidget(self._animadex_button)
         buttons_layout.addWidget(self._recipe_browse_button)
         buttons_layout.addWidget(self._lora_browse_button)
         buttons_layout.addWidget(self._enhance_button)
@@ -500,6 +511,8 @@ class ActiveRegionWidget(QFrame):
             self._update_language()
         elif key == "ollama_enabled":
             self._enhance_button.setVisible(value)
+        elif key == "animadex_enabled":
+            self._animadex_button.setVisible(value)
         elif key == "ollama_model":
             self._update_enhance_tooltip()
 
@@ -890,6 +903,15 @@ class ActiveRegionWidget(QFrame):
         self._wildcard_dialog.show()
         self._wildcard_dialog.raise_()
         self._wildcard_dialog.activateWindow()
+
+    def _open_animadex_picker(self):
+        from .animadex_picker import AnimadexPickerDialog
+
+        if self._animadex_dialog is None:
+            self._animadex_dialog = AnimadexPickerDialog(parent=self)
+        self._animadex_dialog.show()
+        self._animadex_dialog.raise_()
+        self._animadex_dialog.activateWindow()
 
     def _open_prompt_picker(self):
         self._ensure_prompt_dialog()

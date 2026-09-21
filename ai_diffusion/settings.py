@@ -290,6 +290,23 @@ class Settings(QObject):
         ],
     )
 
+    animadex_enabled: bool
+    _animadex_enabled = Setting(
+        _("AnimaDex Browser"),
+        True,
+        _("Show a button which browses the AnimaDex character and artist catalogue"),
+    )
+
+    animadex_host: str
+    _animadex_host = Setting(
+        _("AnimaDex Site"),
+        "animadex.net",
+        _(
+            "Where the catalogue is read from. The site is open source - point this at a"
+            " self-hosted instance (e.g. 127.0.0.1:5000) to browse it locally."
+        ),
+    )
+
     civitai_download_root: str
     _civitai_download_root = Setting(
         _("CivitAI Download Folder"),
@@ -661,6 +678,17 @@ class Settings(QObject):
     _checkpoint_browser_size = Setting("Checkpoint Browser Thumbnail Size", 128)
     checkpoint_browser_sort: str
     _checkpoint_browser_sort = Setting("Checkpoint Browser Sort", "name")
+
+    animadex_browser_size: int
+    _animadex_browser_size = Setting("AnimaDex Browser Thumbnail Size", 128)
+    animadex_browser_sort: str
+    _animadex_browser_sort = Setting("AnimaDex Browser Sort", "count")
+    animadex_browser_mode: str
+    _animadex_browser_mode = Setting("AnimaDex Browser Mode", "characters")
+    animadex_browser_source: str
+    _animadex_browser_source = Setting("AnimaDex Browser Source", "auto")
+    animadex_with_tags: bool
+    _animadex_with_tags = Setting("AnimaDex Insert Tags", False)
 
     wildcard_browser_sort: str
     _wildcard_browser_sort = Setting("Wildcard Browser Sort", "name")

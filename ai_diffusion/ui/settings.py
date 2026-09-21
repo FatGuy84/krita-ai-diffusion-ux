@@ -887,6 +887,17 @@ class IntegrationSettings(SettingsTab):
 
         _section(
             self._layout,
+            _("AnimaDex"),
+            _(
+                "Character and artist catalogue for the Anima model. Import the offline"
+                " dataset from inside the browser window."
+            ),
+        )
+        self.add("animadex_enabled", SwitchSetting(S._animadex_enabled, parent=self))
+        self.add("animadex_host", TextSetting(S._animadex_host, parent=self))
+
+        _section(
+            self._layout,
             _("Lora Manager"),
             _(
                 "ComfyUI-Lora-Manager runs on the ComfyUI server and provides the LoRA,"
