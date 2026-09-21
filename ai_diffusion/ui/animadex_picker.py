@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import random
 from datetime import datetime
 
@@ -210,6 +211,7 @@ class AnimadexBrowser(QWidget):
         self._selected_label = QLabel(_("Nothing selected"), self)
         self._selected_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._selected_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._selected_label.setTextFormat(Qt.TextFormat.RichText)
 
         self._with_tags = QCheckBox(_("+ tags"), self)
         self._with_tags.setToolTip(
@@ -298,9 +300,15 @@ class AnimadexBrowser(QWidget):
         self._import_btn.setEnabled(not self._importing)
         self._loras_only.setVisible(self.mode == "characters" and self.source == _SOURCE_ONLINE)
         self._wildcard_btn.setToolTip(
-            _("Write the trigger of every result of the current search into a wildcard file")
+            _(
+                "Write the triggers of the selected entries into a wildcard file - or of every"
+                " result of the current search when nothing is selected"
+            )
             if self.source == _SOURCE_OFFLINE
-            else _("Write the triggers of the results loaded so far into a wildcard file")
+            else _(
+                "Write the triggers of the selected entries into a wildcard file - or of the"
+                " results loaded so far when nothing is selected"
+            )
         )
 
     # ── sort / facets ──
@@ -384,6 +392,7 @@ class AnimadexBrowser(QWidget):
         self._result = SearchResult()
         self._grid.clear()
         self._pending.clear()
+        self._on_selection_changed()
         self._load_page(1)
 
     def _load_page(self, page: int):
@@ -572,9 +581,15 @@ class AnimadexBrowser(QWidget):
     def _on_selection_changed(self):
         entries = self._selected()
         self._add_btn.setEnabled(bool(entries))
-        self._selected_label.setText(
-            self._prompt_text(entries) if entries else _("Nothing selected")
-        )
+        if entries:
+            count = _("{count} selected").format(count=len(entries))
+            self._selected_label.setText(
+                f"<b>{count}</b> · {html.escape(self._prompt_text(entries))}"
+            )
+            self._wildcard_btn.setText(_("Save Selected as Wildcard…"))
+        else:
+            self._selected_label.setText(_("Nothing selected"))
+            self._wildcard_btn.setText(_("Save as Wildcard…"))
 
     def _add_to_prompt(self):
         entries = self._selected()
@@ -636,13 +651,19 @@ class AnimadexBrowser(QWidget):
     # ── wildcards ──
 
     def _save_as_wildcard(self):
-        if self.source == _SOURCE_OFFLINE:
+        # A selection is what the user means; only without one does "all" apply.
+        entries = self._selected()
+        if entries:
+            scope = _("{count} selected").format(count=len(entries))
+        elif self.source == _SOURCE_OFFLINE:
             entries = self._catalog.all_matching(
                 self.mode, self._search.text().strip(), self._filters()
             )
             entries = [e for e in entries if not e.is_hidden]
+            scope = _("all {count} results").format(count=len(entries))
         else:
             entries = list(self._entries)
+            scope = _("{count} loaded results").format(count=len(entries))
         with_tags = self._with_tags.isChecked()
         lines = wildcard_lines(entries, with_tags)
         if not lines:
@@ -654,7 +675,11 @@ class AnimadexBrowser(QWidget):
         name, ok = QInputDialog.getText(
             self,
             _("Save as Wildcard"),
-            _("{count} lines. File name (may include a folder/ prefix):").format(count=len(lines)),
+            _("{scope}, {count} lines{tags}. File name (may include a folder/ prefix):").format(
+                scope=scope,
+                count=len(lines),
+                tags=_(" with tags") if with_tags else "",
+            ),
             QLineEdit.EchoMode.Normal,
             default,
         )

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from krita import Krita
-from PyQt5.QtCore import QUrl, Qt, pyqtSignal
-from PyQt5.QtGui import QDesktopServices
+from PyQt5.QtCore import QFile, QUrl, Qt, pyqtSignal
+from PyQt5.QtGui import QDesktopServices, QKeySequence
 from PyQt5.QtWidgets import (
     QComboBox,
     QDialog,
@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QShortcut,
     QSizePolicy,
     QSplitter,
     QTabWidget,
@@ -38,6 +39,19 @@ _MODE_SEQUENTIAL = "sequential"
 _MODE_SEQUENTIAL_FILE = "sequential_file"
 _SORT_NAME = "name"
 _SORT_DATE = "date"
+
+
+def _move_to_trash(path: str) -> bool:
+    # Qt < 5.15 has no trash support - the library then deletes outright. The static
+    # PyQt5 overload returns (ok, path_in_trash), a tuple that is always truthy.
+    move = getattr(QFile, "moveToTrash", None)
+    if move is None:
+        return False
+    try:
+        result = move(path)
+    except Exception:
+        return False
+    return bool(result[0] if isinstance(result, tuple) else result)
 
 
 class WildcardBrowser(QWidget):
@@ -104,6 +118,15 @@ class WildcardBrowser(QWidget):
         self._rename_btn.setEnabled(False)
         self._rename_btn.clicked.connect(self._rename_selected)
 
+        self._delete_btn = QToolButton(self)
+        self._delete_btn.setText(_("Delete…"))
+        self._delete_btn.setToolTip(_("Move this wildcard file to the trash (Del)"))
+        self._delete_btn.setEnabled(False)
+        self._delete_btn.clicked.connect(self._delete_selected)
+        delete_shortcut = QShortcut(QKeySequence(QKeySequence.StandardKey.Delete), self._list)
+        delete_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        delete_shortcut.activated.connect(self._delete_selected)
+
         self._save_btn = QToolButton(self)
         self._save_btn.setText(_("Save"))
         self._save_btn.setToolTip(_("Write the edited content back to the file"))
@@ -113,6 +136,7 @@ class WildcardBrowser(QWidget):
         preview_header = QHBoxLayout()
         preview_header.addWidget(self._preview_label, 1)
         preview_header.addWidget(self._rename_btn)
+        preview_header.addWidget(self._delete_btn)
         preview_header.addWidget(self._save_btn)
 
         self._preview = QPlainTextEdit(self)
@@ -266,6 +290,7 @@ class WildcardBrowser(QWidget):
         try:
             self._preview.setEnabled(name is not None)
             self._rename_btn.setEnabled(name is not None)
+            self._delete_btn.setEnabled(name is not None)
             self._save_btn.setEnabled(False)
             if name is None:
                 self._preview_label.setText(_("Select a wildcard to preview its content."))
@@ -320,7 +345,9 @@ class WildcardBrowser(QWidget):
             self._update_preview(name)  # reflects the file as re-parsed from disk
         else:
             QMessageBox.warning(
-                self, _("Save Failed"), _("Could not write the wildcard file. See the log for details.")
+                self,
+                _("Save Failed"),
+                _("Could not write the wildcard file. See the log for details."),
             )
 
     def _create_wildcard(self):
@@ -335,7 +362,8 @@ class WildcardBrowser(QWidget):
             self._preview.setFocus()
         else:
             QMessageBox.warning(
-                self, _("Create Failed"),
+                self,
+                _("Create Failed"),
                 _("Could not create the wildcard file - a file with that name may already exist."),
             )
 
@@ -345,7 +373,8 @@ class WildcardBrowser(QWidget):
             return
         if self._dirty:
             QMessageBox.information(
-                self, _("Unsaved Changes"),
+                self,
+                _("Unsaved Changes"),
                 _("Save or discard the edited content before renaming this file."),
             )
             return
@@ -363,8 +392,37 @@ class WildcardBrowser(QWidget):
             self._select_item_by_name(new_name.strip().strip("/\\").lower())
         else:
             QMessageBox.warning(
-                self, _("Rename Failed"),
+                self,
+                _("Rename Failed"),
                 _("Could not rename the file - the target name may already exist or be invalid."),
+            )
+
+    def _delete_selected(self):
+        name = self._current_name
+        if name is None:
+            return
+        count = len(self._library.get(name) or [])
+        answer = QMessageBox.question(
+            self,
+            _("Delete Wildcard"),
+            _("Move") + f" __{name}__ ({count} " + _("lines") + ") " + _("to the trash?"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if self._library.delete(name, _move_to_trash):
+            self._dirty = False  # unsaved edits of a deleted file have nothing to go to
+            self._current_name = None
+            self._apply_filter()
+            self._add_btn.setEnabled(False)
+            self._selected_label.setText(_("No wildcard selected"))
+            self._update_preview(None)
+        else:
+            QMessageBox.warning(
+                self,
+                _("Delete Failed"),
+                _("Could not delete the wildcard file. See the log for details."),
             )
 
     def may_close(self) -> bool:

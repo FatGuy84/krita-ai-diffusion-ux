@@ -7,6 +7,7 @@ folder in directly and it works with no extra setup."""
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from .util import client_logger as log
 from .util import user_data_dir
@@ -110,6 +111,29 @@ class WildcardLibrary:
             return False
         self.reload()
         return True
+
+    def delete(self, name: str, move_to_trash: Callable[[str], bool] | None = None) -> bool:
+        """Remove a wildcard file. `move_to_trash` (e.g. QFile.moveToTrash) keeps a slip
+        recoverable; the file is deleted outright only if it's missing or fails.
+        Folders left empty are removed as well."""
+        path = self.path_for(name)
+        if path is None:
+            return False
+        try:
+            if not (move_to_trash and move_to_trash(str(path))):
+                path.unlink()
+            parent = path.parent
+            while parent != self.folder and parent.is_relative_to(self.folder):
+                if any(parent.iterdir()):
+                    break
+                parent.rmdir()
+                parent = parent.parent
+        except Exception as e:
+            log.warning(f"Could not delete wildcard file {path}: {e}")
+            return False
+        finally:
+            self.reload()
+        return not path.exists()
 
     def __len__(self):
         return len(self._entries)

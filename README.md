@@ -90,7 +90,7 @@ prompt rather than silently disappearing, so a typo or missing file is easy
 to spot instead of just producing a slightly-off image.
 
 The browser has two tabs. **Library** lists the files and edits them in place
-(create, rename, edit, save). **Generate** writes a new one with the local
+(create, rename, edit, save, delete - deleted files go to the system trash). **Generate** writes a new one with the local
 language model: name a category — hairstyles, hair colors, poses, outfits —
 and it produces a list of interchangeable options, which you can prune before
 saving. Entries are written in rounds rather than one call each, since an entry
@@ -195,9 +195,10 @@ each with a sample render and the trigger phrase that reproduces it.
 * **Add to Prompt** inserts the trigger (`hatsune miku, vocaloid`); tick
   **+ tags** to also insert the character's appearance tags. Multi-select
   inserts several at once
-* **Save as Wildcard…** writes the triggers of the current search into a
-  wildcard file (e.g. every Touhou character as `__animadex/touhou__`), ready
-  for sequential wildcards and Cartesian batches
+* **Save as Wildcard…** writes the triggers of the selected entries into a
+  wildcard file - or, with nothing selected, of every result of the current
+  search (e.g. every Touhou character as `__animadex/touhou__`), ready for
+  sequential wildcards and Cartesian batches. **+ tags** applies here too
 * Right-click: copy the trigger, open the danbooru page, or open a character's
   Anima LoRA on CivitAI
 * A warning shows when the current model isn't Anima or Illustrious, since
