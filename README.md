@@ -222,6 +222,18 @@ LoRA links, votes and artist categories exist only on the live site; the
 Settings → Integrations → AnimaDex hides the button or points it at a
 self-hosted instance (e.g. `127.0.0.1:5000`).
 
+**Blank thumbnails or "closed the connection" on import?** Images and the
+offline export are served from a second host, `blobs.animadex.net`. Some
+antivirus web filters block that host by name while letting `animadex.net`
+through — confirmed with Bitdefender's Online Threat Prevention. Your browser
+still loads the images because it hides the host name via Encrypted Client
+Hello, which Krita's Qt can't do, so only Krita is affected. The browser
+window shows a warning when this happens; the fix is adding
+`blobs.animadex.net` to the filter's exceptions (Bitdefender: Protection →
+Online Threat Prevention → Settings → Manage exceptions). Check what the
+filter reported first — if it flags the host as malware or phishing rather
+than a content category, think twice.
+
 ### CivitAI Browser
 
 The **CivitAI** tab — in the LoRA browser for LoRAs, in the style dialog for
