@@ -690,6 +690,8 @@ class Settings(QObject):
     _animadex_browser_mode = Setting("AnimaDex Browser Mode", "characters")
     animadex_browser_source: str
     _animadex_browser_source = Setting("AnimaDex Browser Source", "auto")
+    animadex_multi_format: str
+    _animadex_multi_format = Setting("AnimaDex Multi-Select Format", "random")
     animadex_with_tags: bool
     _animadex_with_tags = Setting("AnimaDex Insert Tags", False)
 

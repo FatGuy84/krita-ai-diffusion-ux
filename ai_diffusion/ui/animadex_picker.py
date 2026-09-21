@@ -41,6 +41,9 @@ from . import theme
 _POS_END = "end"
 _POS_START = "start"
 _POS_CURSOR = "cursor"
+_FORMAT_RANDOM = "random"
+_FORMAT_SEQUENTIAL = "sequential"
+_FORMAT_SEPARATE = "separate"
 _SOURCE_AUTO = "auto"
 _SOURCE_OFFLINE = "offline"
 _SOURCE_ONLINE = "online"
@@ -220,6 +223,22 @@ class AnimadexBrowser(QWidget):
         self._with_tags.setChecked(settings.animadex_with_tags)
         self._with_tags.toggled.connect(self._on_with_tags_changed)
 
+        # multi-select only, same choices as the LoRA browser
+        self._format_combo = QComboBox(self)
+        self._format_combo.addItem(_("Random {a|b}"), _FORMAT_RANDOM)
+        self._format_combo.addItem(_("Sequential [[a|b]]"), _FORMAT_SEQUENTIAL)
+        self._format_combo.addItem(_("Separate (all)"), _FORMAT_SEPARATE)
+        self._format_combo.setToolTip(
+            _(
+                "Random: one is picked per generation. Sequential: cycles through in batch order."
+                " Separate: adds all of them together, no wildcard."
+            )
+        )
+        idx = self._format_combo.findData(settings.animadex_multi_format)
+        self._format_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._format_combo.currentIndexChanged.connect(self._on_format_changed)
+        self._format_combo.setVisible(False)
+
         self._position_combo = QComboBox(self)
         self._position_combo.addItem(_("at End"), _POS_END)
         self._position_combo.addItem(_("at Start"), _POS_START)
@@ -232,6 +251,7 @@ class AnimadexBrowser(QWidget):
         bottom = QHBoxLayout()
         bottom.addWidget(self._selected_label, 1)
         bottom.addWidget(self._with_tags)
+        bottom.addWidget(self._format_combo)
         bottom.addWidget(QLabel(_("Insert:"), self))
         bottom.addWidget(self._position_combo)
         bottom.addWidget(self._add_btn)
@@ -574,18 +594,34 @@ class AnimadexBrowser(QWidget):
     def _selected(self) -> list[Entry]:
         return [i.data(Qt.ItemDataRole.UserRole) for i in self._grid.selectedItems()]
 
+    def _is_wildcard_block(self, entries: list[Entry]) -> bool:
+        return len(entries) > 1 and self._format_combo.currentData() != _FORMAT_SEPARATE
+
     def _prompt_text(self, entries: list[Entry]) -> str:
         with_tags = self._with_tags.isChecked()
-        return ", ".join(e.prompt_with_tags if with_tags else e.prompt for e in entries)
+        lines = [e.prompt_with_tags if with_tags else e.prompt for e in entries]
+        if not self._is_wildcard_block(entries):
+            return ", ".join(lines)
+        # One option per line, like the LoRA browser. Triggers contain commas
+        # ("hatsune miku, vocaloid"), which is fine: options only split at "|".
+        joined = "|\n".join(lines)
+        if self._format_combo.currentData() == _FORMAT_SEQUENTIAL:
+            return f"[[\n{joined}\n]]"
+        return f"{{\n{joined}\n}}"
+
+    def _on_format_changed(self):
+        settings.animadex_multi_format = self._format_combo.currentData()
+        settings.save()
+        self._on_selection_changed()
 
     def _on_selection_changed(self):
         entries = self._selected()
         self._add_btn.setEnabled(bool(entries))
+        self._format_combo.setVisible(len(entries) > 1)
         if entries:
             count = _("{count} selected").format(count=len(entries))
-            self._selected_label.setText(
-                f"<b>{count}</b> · {html.escape(self._prompt_text(entries))}"
-            )
+            preview = self._prompt_text(entries).replace("|\n", " | ").replace("\n", "")
+            self._selected_label.setText(f"<b>{count}</b> · {html.escape(preview)}")
             self._wildcard_btn.setText(_("Save Selected as Wildcard…"))
         else:
             self._selected_label.setText(_("Nothing selected"))
@@ -602,10 +638,13 @@ class AnimadexBrowser(QWidget):
             return
         region = model.regions.active_or_root
         current = region.positive.strip()
+        block = self._is_wildcard_block(entries)  # a multi-line group goes on its own line
         if not current:
             region.positive = text
         elif position == _POS_START:
-            region.positive = f"{text}, {current}"
+            region.positive = f"{text}\n{current}" if block else f"{text}, {current}"
+        elif block:
+            region.positive = f"{current}\n{text}"
         else:
             separator = " " if current.endswith(",") else ", "
             region.positive = current + separator + text

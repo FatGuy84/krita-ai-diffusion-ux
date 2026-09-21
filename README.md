@@ -193,8 +193,11 @@ each with a sample render and the trigger phrase that reproduces it.
   filter by series, gender, hair colour/length, eye colour, or artwork score
   for artists
 * **Add to Prompt** inserts the trigger (`hatsune miku, vocaloid`); tick
-  **+ tags** to also insert the character's appearance tags. Multi-select
-  inserts several at once
+  **+ tags** to also insert the character's appearance tags. With several
+  selected, pick the format like in the LoRA browser: **Random** `{a|b}`
+  (one per generation), **Sequential** `[[a|b]]` (cycles through the batch,
+  combines with other groups into a Cartesian product) or **Separate** (all
+  at once)
 * **Save as Wildcard…** writes the triggers of the selected entries into a
   wildcard file - or, with nothing selected, of every result of the current
   search (e.g. every Touhou character as `__animadex/touhou__`), ready for
