@@ -237,7 +237,7 @@ class ActiveRegionWidget(QFrame):
         self._animadex_button.setToolTip(_("Browse AnimaDex characters and artists for Anima"))
         self._animadex_button.setAutoRaise(True)
         self._animadex_button.clicked.connect(self._open_animadex_picker)
-        self._animadex_button.setVisible(settings.animadex_enabled)
+        self._animadex_button.setVisible(False)  # see _update_animadex_visibility
         self._animadex_dialog = None
 
         self._prompt_browse_button = QToolButton(self)
@@ -384,7 +384,12 @@ class ActiveRegionWidget(QFrame):
             self._root.active_layer_changed.connect(self._update_links),
             self._new_region_button.clicked.connect(self._root.create_region_layer),
             self._root._model.translation_enabled_changed.connect(self._update_language),
+            self._root._model.style_changed.connect(self._update_animadex_visibility),
+            self._root._model.edit_mode_changed.connect(self._update_animadex_visibility),
+            self._root._model.workspace_changed.connect(self._update_animadex_visibility),
+            root.connection.models_changed.connect(self._update_animadex_visibility),
         ]
+        self._update_animadex_visibility()
         self._update_header()
         self._update_links()
         self._update_language()
@@ -512,7 +517,7 @@ class ActiveRegionWidget(QFrame):
         elif key == "ollama_enabled":
             self._enhance_button.setVisible(value)
         elif key == "animadex_enabled":
-            self._animadex_button.setVisible(value)
+            self._update_animadex_visibility()
         elif key == "ollama_model":
             self._update_enhance_tooltip()
 
@@ -903,6 +908,16 @@ class ActiveRegionWidget(QFrame):
         self._wildcard_dialog.show()
         self._wildcard_dialog.raise_()
         self._wildcard_dialog.activateWindow()
+
+    def _update_animadex_visibility(self, *_args):
+        # AnimaDex triggers are made for Anima; with any other style they're noise.
+        # The arch comes from the style's checkpoint, which the server's model list
+        # can change, hence the connection signal too.
+        try:
+            is_anima = self._root._model.arch.name == "anima"
+        except Exception:
+            is_anima = False
+        self._animadex_button.setVisible(settings.animadex_enabled and is_anima)
 
     def _open_animadex_picker(self):
         from .animadex_picker import AnimadexPickerDialog

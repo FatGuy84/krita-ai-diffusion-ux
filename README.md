@@ -184,7 +184,7 @@ like becomes reusable without retyping anything.
 
 ### AnimaDex Browser
 
-Click the **AnimaDex** button in the prompt toolbar to browse
+With an Anima style selected, click the **AnimaDex** button in the prompt toolbar to browse
 [AnimaDex](https://animadex.net) ([source](https://github.com/zetaneko/AnimaDex)) —
 a catalogue of ~36k anime characters and artists the Anima model knows,
 each with a sample render and the trigger phrase that reproduces it.
@@ -201,8 +201,6 @@ each with a sample render and the trigger phrase that reproduces it.
   sequential wildcards and Cartesian batches. **+ tags** applies here too
 * Right-click: copy the trigger, open the danbooru page, or open a character's
   Anima LoRA on CivitAI
-* A warning shows when the current model isn't Anima or Illustrious, since
-  the triggers are danbooru tags
 
 **Offline catalogue.** Without setup the browser reads the live site, 36
 results at a time. For instant search, click **Import…** and paste an export

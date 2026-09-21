@@ -294,7 +294,10 @@ class Settings(QObject):
     _animadex_enabled = Setting(
         _("AnimaDex Browser"),
         True,
-        _("Show a button which browses the AnimaDex character and artist catalogue"),
+        _(
+            "Show a button which browses the AnimaDex character and artist catalogue"
+            " while an Anima style is selected"
+        ),
     )
 
     animadex_host: str
