@@ -192,7 +192,12 @@ each with a sample render and the trigger phrase that reproduces it.
 * Search by name, series or tag (comma-separated terms must all match),
   filter by series, gender, hair colour/length, eye colour, or artwork score
   for artists
-* **Add to Prompt** inserts the trigger (`hatsune miku, vocaloid`); tick
+* **Add to Prompt** inserts the trigger in the form the
+  [Anima model card](https://huggingface.co/circlestone-labs/Anima) asks
+  for: artists get their required `@` prefix, and danbooru disambiguators are
+  escaped (`sabo \(one piece\)`) - unescaped, ComfyUI would read the
+  parentheses as a weight and drop them. Wildcard export and "Copy" use the
+  same form. Tick
   **+ tags** to also insert the character's appearance tags. With several
   selected, pick the format like in the LoRA browser: **Random** `{a|b}`
   (one per generation), **Sequential** `[[a|b]]` (cycles through the batch,

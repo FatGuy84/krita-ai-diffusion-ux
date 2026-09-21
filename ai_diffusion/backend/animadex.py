@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -46,6 +47,23 @@ def api_url(host: str = "") -> str:
 def _is_local(host: str) -> bool:
     name = host.split("/")[0].split(":")[0].lower()
     return name in ("localhost", "127.0.0.1", "::1") or name.endswith(".local")
+
+
+_unescaped_paren = re.compile(r"(?<!\\)([()])")
+
+
+def prompt_tag(tag: str, artist: bool = False) -> str:
+    """Write a catalogue tag the way the Anima model card asks for it.
+
+    Parentheses are danbooru disambiguators ("sabo (one piece)"), but ComfyUI reads
+    them as attention weights - it would drop them and weight "one piece" instead.
+    Escaped, they reach the text encoder literally. Artists need an "@" prefix,
+    without it the style barely registers. Idempotent, so already escaped or
+    prefixed tags stay as they are."""
+    tag = _unescaped_paren.sub(r"\\\1", tag.strip())
+    if artist and tag and not tag.startswith("@"):
+        tag = "@" + tag
+    return tag
 
 
 def user_agent() -> str:
@@ -111,18 +129,20 @@ class Entry:
     up_votes: int = 0
     down_votes: int = 0
     fav_count: int = 0
+    is_artist: bool = False
 
     @property
     def prompt(self) -> str:
-        return self.trigger
+        """The trigger as it belongs in an Anima prompt (see prompt_tag)."""
+        return prompt_tag(self.trigger, artist=self.is_artist)
 
     @property
     def prompt_with_tags(self) -> str:
-        parts = [self.trigger] + [t for t in self.tags if t]
+        parts = [self.prompt] + [prompt_tag(t) for t in self.tags if t]
         return ", ".join(p for p in parts if p)
 
     @staticmethod
-    def from_api(data: dict) -> Entry:
+    def from_api(data: dict, is_artist: bool = False) -> Entry:
         tags = data.get("tags") or []
         if isinstance(tags, str):
             tags = [t.strip() for t in tags.split(",") if t.strip()]
@@ -146,6 +166,7 @@ class Entry:
             up_votes=int(rating.get("up") or 0),
             down_votes=int(rating.get("down") or 0),
             fav_count=int(data.get("fav_count") or 0),
+            is_artist=is_artist,
         )
 
 
@@ -218,7 +239,7 @@ async def search(
         return SearchResult()
     results = data.get("results") or []
     return SearchResult(
-        entries=[Entry.from_api(r) for r in results if isinstance(r, dict)],
+        entries=[Entry.from_api(r, mode == "artists") for r in results if isinstance(r, dict)],
         total=int(data.get("total") or 0),
         page=int(data.get("page") or page),
         pages=int(data.get("pages") or 1),

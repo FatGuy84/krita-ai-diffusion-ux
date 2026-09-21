@@ -501,7 +501,7 @@ class AnimadexBrowser(QWidget):
         self._grid.addItem(item)
 
     def _tooltip(self, entry: Entry) -> str:
-        lines = [f"<b>{entry.name}</b>", entry.trigger]
+        lines = [f"<b>{html.escape(entry.name)}</b>", f"<code>{html.escape(entry.prompt)}</code>"]
         if entry.tags:
             lines.append(f"<i>{', '.join(entry.tags)}</i>")
         stats = [f"{entry.count:,} " + _("danbooru posts")]

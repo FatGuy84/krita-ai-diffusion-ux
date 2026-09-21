@@ -189,6 +189,7 @@ def parse_artist_row(row: dict) -> Record | None:
         trigger=trigger,
         count=_int(row.get("count")),
         score=_float(row.get("score")),
+        is_artist=True,
         source_url=(row.get("url") or "").strip(),
         is_hidden=_bool(row.get("is_hidden") or row.get("hidden")),
     )
