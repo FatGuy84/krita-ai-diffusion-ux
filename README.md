@@ -8,6 +8,10 @@ All credit for the plugin itself goes to [Acly](https://github.com/Acly) and the
 upstream contributors — this fork only layers UX improvements on top and tracks
 upstream releases (currently based on v1.53.0).
 
+If this fork saves you time, you can support it on [Ko-fi](https://ko-fi.com/fatguy84)
+or [GitHub Sponsors](https://github.com/sponsors/FatGuy84) — and please consider
+[sponsoring Acly](https://github.com/sponsors/Acly) too, who built the plugin this is based on.
+
 **This fork is for you if:**
 
 * you work with large LoRA collections and want to browse them visually
