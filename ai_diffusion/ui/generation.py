@@ -4,6 +4,8 @@ import json
 from textwrap import wrap as wrap_text
 from typing import ClassVar, cast
 
+from krita import Krita
+
 from PyQt5.QtCore import (
     QEvent,
     QItemSelectionModel,
@@ -838,6 +840,15 @@ class HistoryWidget(QListWidget):
             clipboard.setText(text)
 
     def _save_image(self):
+        if not self._model.document.filename:
+            QMessageBox.information(
+                self,
+                _("Save Image"),
+                _("Please save the Krita document first, then save the generated image."),
+            )
+            if action := Krita.instance().action("file_save_as"):
+                action.trigger()
+            return
         items = self.selectedItems()
         for item in items:
             job_id, image_index = self.item_info(item)
