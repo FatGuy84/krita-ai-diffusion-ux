@@ -1,4 +1,9 @@
-<h1><img width="64px" src="ai_diffusion/icons/logo-128.png"> Krita AI Reloaded</h1>
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="branding/wordmark-dark.svg">
+    <img width="330" src="branding/wordmark-light.svg" alt="Krita AI Reloaded">
+  </picture>
+</h1>
 
 A usability-focused fork of the [Krita AI Diffusion plugin](https://github.com/Acly/krita-ai-diffusion)
 with numerous quality-of-life improvements for prompt handling, LoRA management
