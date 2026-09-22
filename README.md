@@ -1,4 +1,4 @@
-<h1><img width="64px" src="ai_diffusion/icons/logo-128.png"> Generative AI <i>for Krita</i> — UX Edition</h1>
+<h1><img width="64px" src="ai_diffusion/icons/logo-128.png"> Krita AI Reloaded</h1>
 
 A usability-focused fork of the [Krita AI Diffusion plugin](https://github.com/Acly/krita-ai-diffusion)
 with numerous quality-of-life improvements for prompt handling, LoRA management
