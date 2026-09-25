@@ -227,7 +227,9 @@ class DocumentModel(QObject, ObservableProperties):
         `apply_each` is a list of callables, each mutating the setup before a generate;
         `restore` puts the mutated state back afterwards."""
         original_fixed, original_increment, original_seed = (
-            self.fixed_seed, self.seed_increment, self.seed,
+            self.fixed_seed,
+            self.seed_increment,
+            self.seed,
         )
         self.fixed_seed = True
         self.seed = seed
@@ -276,7 +278,12 @@ class DocumentModel(QObject, ObservableProperties):
             return
         self.clear_error()
         jobs = self.enqueue_jobs(
-            input, JobKind.diffusion, job_params, cond_orig, self.batch_count, queue_mode,
+            input,
+            JobKind.diffusion,
+            job_params,
+            cond_orig,
+            self.batch_count,
+            queue_mode,
             prompt_loras_0=prompt_loras_0,
         )
         eventloop.run(_report_errors(self, jobs))
@@ -419,7 +426,9 @@ class DocumentModel(QObject, ObservableProperties):
 
         prompt_lora_names_0 = {l.name for l in (prompt_loras_0 or [])}
         base_loras = [
-            l for l in (input.models.loras if input.models else []) if l.name not in prompt_lora_names_0
+            l
+            for l in (input.models.loras if input.models else [])
+            if l.name not in prompt_lora_names_0
         ]
 
         for i in range(count):
@@ -1064,6 +1073,29 @@ class DocumentModel(QObject, ObservableProperties):
                 self.jobs.notify_sent_to_eagle(job_id, index)
 
         eventloop.run(_report_errors(self, _send()))
+
+    @property
+    def dlss5_available(self):
+        client = self._connection.client_if_connected
+        return client is not None and workflow.dlss5_node in client.models.node_inputs
+
+    def enhance_result_dlss5(self, job_id: str, index: int, style: str):
+        job = self.jobs.find(job_id)
+        assert job is not None, "Cannot enhance result, invalid job id"
+        assert len(job.results) > index, "Cannot enhance result, invalid result index"
+        if not self.dlss5_available:
+            self.report_error(_("DLSS5 Enhance nodes are not installed on the server"))
+            return
+        input = workflow.prepare_dlss5_enhance(job.results[index], style)
+        # Same bounds, prompt and metadata as the source image so it applies to the
+        # same place and keeps its info, but its own batch in the history.
+        params = copy(job.params)
+        params.name = f"[DLSS5] {job.params.name}"
+        params.metadata = job.params.metadata | {"dlss5_style": style}
+        params.workflow_kind = WorkflowKind.dlss5_enhance
+        params.batch_id = uuid.uuid4().hex
+        new_job = self.jobs.add(JobKind.diffusion, params)
+        eventloop.run(_report_errors(self, self._enqueue_job(new_job, input)))
 
     def send_result_to_recipe(self, job_id: str, index: int):
         from ..backend.lora_manager import save_recipe

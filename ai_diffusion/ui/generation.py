@@ -732,6 +732,11 @@ class HistoryWidget(QListWidget):
             )
             menu.addAction(_("Info to Clipboard"), self._info_to_clipboard)
             menu.addSeparator()
+            if self._model.dlss5_available:  # only with the optional DLSS5 node pack
+                dlss5_menu = menu.addMenu(_("DLSS5 Enhance"))
+                for style in ("Cinematic", "Default", "Natural"):
+                    dlss5_menu.addAction(_(style), self._make_dlss5_enhancer(style))
+                menu.addSeparator()
             __, index = self.item_info(item)
             is_fav = job is not None and job.is_favorite(index or 0)
             fav_label = _("Remove from Favorites") if is_fav else _("Mark as Favorite")
@@ -859,6 +864,14 @@ class HistoryWidget(QListWidget):
         for item in items:
             job_id, image_index = self.item_info(item)
             self._model.send_result_to_eagle(job_id, image_index)
+
+    def _make_dlss5_enhancer(self, style: str):
+        def enhance():
+            for item in self.selectedItems():
+                job_id, image_index = self.item_info(item)
+                self._model.enhance_result_dlss5(job_id, image_index or 0, style)
+
+        return enhance
 
     def _save_as_recipe(self):
         items = self.selectedItems()

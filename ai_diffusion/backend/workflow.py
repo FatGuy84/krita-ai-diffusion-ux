@@ -26,6 +26,7 @@ from .api import (
     ControlInput,
     CustomStyleInput,
     CustomWorkflowInput,
+    Dlss5Input,
     ExtentInput,
     FillMode,
     ImageInput,
@@ -1317,6 +1318,36 @@ def upscale_simple(w: ComfyWorkflow, image: Image, model: str, factor: float):
     return w
 
 
+dlss5_node = "DLSS5EnhanceImages"  # optional node pack: Blueforcer/ComfyUI-DLSS5-Enhancer
+
+
+def dlss5_enhance(w: ComfyWorkflow, image: Image, params: Dlss5Input):
+    # Single still images: no motion vectors, DLAA at source resolution so the result
+    # lands exactly on the bounds of the image it was made from. Model preset M keeps
+    # the most skin and hair texture; the strengths are the node pack's defaults.
+    settings = w.add(
+        "DLSS5Settings",
+        1,
+        upscaling_mode="1x (DLAA / native)",
+        nr_preset="Default",
+        nr_style=params.style,
+        nr_intensity=params.intensity,
+        local_tone_strength=1.0,
+        local_structure_strength=1.5,
+        skin_structure_strength=2.0,
+        automatic_mask=True,
+        dlss_model_preset="M",
+        motion="none",
+        scene_change_threshold=0.24,
+        warmup_frames=0,
+        runtime_dir="",
+    )
+    img = w.load_image(image)
+    img = w.add(dlss5_node, 1, images=img, settings=settings, verify_neural_rendering=True)
+    w.send_image(img)
+    return w
+
+
 def upscale_tiled(
     w: ComfyWorkflow,
     image: Image,
@@ -1749,6 +1780,13 @@ def prepare_upscale_simple(image: Image, model: str, factor: float):
     return i
 
 
+def prepare_dlss5_enhance(image: Image, style: str):
+    i = WorkflowInput(WorkflowKind.dlss5_enhance, ImageInput.from_extent(image.extent))
+    ensure(i.images).initial_image = image
+    i.dlss5 = Dlss5Input(style)
+    return i
+
+
 def prepare_create_control_image(
     image: Image,
     mode: ControlMode,
@@ -1821,6 +1859,8 @@ def create(i: WorkflowInput, models: ClientModels, comfy_mode=ComfyRunMode.serve
         )
     elif i.kind is WorkflowKind.upscale_simple:
         return upscale_simple(workflow, i.image, ensure(i.upscale).model, i.upscale_factor)
+    elif i.kind is WorkflowKind.dlss5_enhance:
+        return dlss5_enhance(workflow, i.image, ensure(i.dlss5))
     elif i.kind is WorkflowKind.upscale_tiled:
         return upscale_tiled(
             workflow,

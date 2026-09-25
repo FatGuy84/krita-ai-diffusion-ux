@@ -55,9 +55,7 @@ pattern_seq_wildcard = re.compile(r"\[\[((?:(?!\]\]).)*)\]\]", re.DOTALL)
 pattern_seq_file_wildcard = re.compile(r"__seq:([\w\-./]+?)__")
 # Matches either kind of sequential group ([[a|b]] or __seq:name__), so both can be
 # combined into a single ordered Cartesian product below.
-pattern_seq_combined = re.compile(
-    r"\[\[((?:(?!\]\]).)*)\]\]|__seq:([\w\-./]+?)__", re.DOTALL
-)
+pattern_seq_combined = re.compile(r"\[\[((?:(?!\]\]).)*)\]\]|__seq:([\w\-./]+?)__", re.DOTALL)
 pattern_file_wildcard = re.compile(r"__([\w\-./]+?)__")
 
 
@@ -359,6 +357,7 @@ _workflow_kind_text = {
     WorkflowKind.upscale_tiled: "Upscale",
     WorkflowKind.control_image: "Control Image",
     WorkflowKind.custom: "Custom",
+    WorkflowKind.dlss5_enhance: "DLSS5 Enhance",
 }
 
 _inpaint_mode_text = {
@@ -387,7 +386,7 @@ def create_ai_generated_xmp(workflow_kind: WorkflowKind):
     source_type = "trainedAlgorithmicMedia"
     if workflow_kind is not WorkflowKind.generate:
         source_type = "compositeWithTrainedAlgorithmicMedia"
-    return f'''<?xpacket begin="\ufeff" id="W5M0MpCehiHzreSzNTczkc9d"?>
+    return f"""<?xpacket begin="\ufeff" id="W5M0MpCehiHzreSzNTczkc9d"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/">
  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
   <rdf:Description rdf:about=""
@@ -395,7 +394,7 @@ def create_ai_generated_xmp(workflow_kind: WorkflowKind):
    Iptc4xmpExt:DigitalSourceType="{digital_source_type}{source_type}"/>
  </rdf:RDF>
 </x:xmpmeta>
-<?xpacket end="w"?>'''
+<?xpacket end="w"?>"""
 
 
 # creates the img text metadata for embedding in PNG files in style like Automatic1111

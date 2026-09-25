@@ -454,6 +454,15 @@ much faster.
   Krita, that rating carries over to Eagle's own star rating.
 
   ![Sending a rated image to Eagle and reviewing it there](media/demo-eagle-export.gif)
+* **DLSS5 Enhance**: right-click a result → "DLSS5 Enhance" → Cinematic /
+  Default / Natural runs it through NVIDIA DLSS 5 neural rendering
+  (reconstructed skin, hair and lighting detail) at the same resolution. The
+  enhanced image lands in the history as its own entry, with the source's
+  prompt and metadata, ready to apply in the same place. Works on a
+  multi-selection. The entry only appears when the server has the
+  [ComfyUI-DLSS5-Enhancer](https://github.com/Blueforcer/ComfyUI-DLSS5-Enhancer)
+  nodes, which need Windows and an RTX 30 series GPU or newer on the machine
+  running ComfyUI.
 * **Generation mode in metadata**: saved PNGs and the history tooltip now
   record *how* an image was made — Generate, Refine, Inpaint (Fill / Add
   Content / Remove Content / Replace Background / …), Upscale, etc. — not
@@ -525,6 +534,8 @@ Some features require additional software:
 * LoRA Browser metadata: [ComfyUI-Lora-Manager](https://github.com/willmiao/ComfyUI-Lora-Manager)
 * Save to Eagle: [Eagle](https://eagle.cool) running locally
 * Krea2 workflows: [comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit) nodes
+* DLSS5 Enhance: [ComfyUI-DLSS5-Enhancer](https://github.com/Blueforcer/ComfyUI-DLSS5-Enhancer)
+  nodes and their runtime (Windows, RTX 30+)
 
 ---
 
