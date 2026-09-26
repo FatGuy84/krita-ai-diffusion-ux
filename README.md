@@ -5,9 +5,29 @@
   </picture>
 </h1>
 
+<p>
+  <a href="https://github.com/Acly/krita-ai-diffusion"><img alt="Based on upstream v1.53.0" src="https://img.shields.io/badge/upstream-v1.53.0-17120C?style=for-the-badge&labelColor=241C13&color=FFB020"></a>
+  <a href="LICENSE"><img alt="License GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-17120C?style=for-the-badge&labelColor=241C13&color=FF7A1A"></a>
+  <a href="https://ko-fi.com/fatguy84"><img alt="Support on Ko-fi" src="https://img.shields.io/badge/support-Ko--fi-17120C?style=for-the-badge&labelColor=241C13&color=FFC24D"></a>
+</p>
+
+> **Generate faster. Browse visually. Run it again.**
+
 A usability-focused fork of the [Krita AI Diffusion plugin](https://github.com/Acly/krita-ai-diffusion)
 with numerous quality-of-life improvements for prompt handling, LoRA management
 and batch generation workflows.
+
+<p>
+  <a href="#sequential-wildcards--batch-control">Wildcards</a> ·
+  <a href="#lora-browser">LoRAs</a> ·
+  <a href="#recipe-browser">Recipes</a> ·
+  <a href="#animadex-browser">AnimaDex</a> ·
+  <a href="#civitai-browser">CivitAI</a> ·
+  <a href="#style-picker">Styles</a> ·
+  <a href="#history--export">History</a> ·
+  <a href="#custom-workflows">Workflows</a> ·
+  <a href="#installation">Install</a>
+</p>
 
 All credit for the plugin itself goes to [Acly](https://github.com/Acly) and the
 upstream contributors — this fork only layers UX improvements on top and tracks
@@ -25,6 +45,15 @@ or [GitHub Sponsors](https://github.com/sponsors/FatGuy84) — and please consid
   combination each batch item uses
 * you want prompt history actions, batch sizing and image export to be less
   clicky and more predictable
+
+## At a glance
+
+| Browse | Batch | Organise |
+| --- | --- | --- |
+| **LoRA, Recipe, Style, Checkpoint and Wildcard pickers** with live search, previews and favorites | **Sequential `[[a\|b]]` wildcards**, Cartesian batches, up to 1000 per run, Loop Generate | **History** with search, favorites, 1–5 star ratings and filters, plus Save to Eagle |
+| **CivitAI and AnimaDex browsers** — search and download without leaving Krita | **Local prompt tools** via Ollama: enhance, batch prompts, generate wildcard files | **Faster startup** through disk-cached model lists, and DLSS5 Enhance on results |
+
+<br>
 
 ## What's different from upstream
 
