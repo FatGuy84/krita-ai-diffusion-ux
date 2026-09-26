@@ -525,32 +525,6 @@ To use them, copy the `.json` files from `custom_workflows/` into
 `%APPDATA%\krita\ai_diffusion\workflows\`, then pick the workflow from the
 Custom workspace's workflow dropdown in Krita.
 
-### Fixes
-
-* **Refresh Models button was a no-op for the "missing models" warning**:
-  clicking Refresh after installing a missing model correctly re-scanned the
-  server, but the connection panel's warning banner never updated to reflect
-  it — you had to fully disconnect and reconnect to make the stale warning
-  go away. Refresh now updates the banner immediately.
-* **Custom workflow graphs without a style node crashed on every generate**:
-  any custom ComfyUI graph that doesn't include a `ETN_KritaStyleAndPrompt`
-  node (e.g. a plain face-swap workflow) hit an unguarded `None` access and
-  threw an error on every single generation attempt. Fixed.
-* **Negative prompt couldn't be resized independently**: it was locked to a
-  single line, and its drag handle actually resized the *positive* prompt
-  field instead. The negative prompt now has its own resizable height.
-* **Loop Generate button barely visible when active**: in the dark theme its
-  checked state was nearly indistinguishable from idle. It now gets a
-  highlighted background/border and a recolored icon while looping.
-* **Scrolling large LoRA/Recipe/Checkpoint/Style browsers was sluggish**:
-  the lazy preview loader scanned every item (up to ~9000 LoRAs) on every
-  scroll tick, and the style browser handed full-resolution images to the
-  list widget, which rescaled them on every repaint. Fixed — loaders now
-  only look at what's actually visible, and thumbnails are pre-scaled. The
-  style browser's list view specifically was still slow after that because
-  its rows (and section headers) had no explicit size, so Qt couldn't use
-  its fast equal-size layout path; both now get one.
-
 ## Installation
 
 Same as upstream — see the [Plugin Installation Guide](https://docs.interstice.cloud/installation).
